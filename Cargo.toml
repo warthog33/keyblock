@@ -17,6 +17,18 @@ des = "0.8.1"
 aes = "0.8.2"
 dbl = "0.3.2"
 getrandom = "0.2.9"
-
+rsa = "0.9.2"
+pem = "2"
+x509-certificate = "0.20.0"
+# asn1_der = "0.7.6"
+# serde_asn1_der = { version = "0.8.0", features = ["any"] }
+# serde_derive = "1.0.163"
+# serde = "1.0.163"
+der = { version =  "0.7.6", features = ["derive"] }
+openssl = { version = "0.10" }
+cms = "0.2.1"
+sha2 = "0.10.7"
+sha1 = "0.10.1"
 [dev-dependencies]
 hex-literal = "0.3"
+
