@@ -12,7 +12,7 @@
 //! # Examples
 //!
 //! ```
-//! use keyblock2::*;
+//! use keyblock::*;
 //! use hex_literal::hex;
 //!
 //! let mut key_block_factory =  KeyBlockTypeDAes256::new ( &hex!("3235362d 62697420 41455320 77726170 70696e67 20284953 4f203230 30333829" ).into());
@@ -54,6 +54,7 @@ use cipher::{crypto_common::{
 }};
 
 pub mod key_block_crypto;
+pub mod tr34;
 //pub mod keyblockfactory;
 //mod tests;
 

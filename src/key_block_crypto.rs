@@ -1,7 +1,7 @@
 
-use std::{cmp::min };
+use std::cmp::min;
 
-use cbc_mac::{Mac};
+use cbc_mac::Mac;
 use cmac::{self, Cmac};
 use ctr::{self, Ctr32BE};
 

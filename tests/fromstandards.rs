@@ -8,6 +8,7 @@ use keyblock::*;
 ///
 /// Example from ANSI X9.143:2021 8.6 ECC Key Block Example with CT Certificate Chain Optional Block
 /// 8.5 RSA Key Block Example with CT Optional Block
+/// Same as ISO 20038:2023 - 8.4 ECC Key Block Example with CT Certificate Chain Optional Block
 /// 
 fn test_x9_143_2021_ecc_keyblock_8_6 () {
     //let mut key_block_factory_8 =  KeyBlockFactory::<aes::Aes256,  flavours::KeyBlockFlavor2<aes::Aes256>>::new(&hex!("88E1AB2A2E3DD38C 1FA039A536500CC8 A87AB9D62DC92C01 058FA79F44657DE6").into());
@@ -85,7 +86,7 @@ fn test_x9_143_2021_ecc_keyblock_8_6 () {
 
 ///
 /// Example from ANSI X9.143:2021 8.5 RSA Key Block Example with CT Optional Block
-/// 
+/// Same as ISO 20038:20038 8.3 RSA Key Block Example with CT Optional Block
 
 #[test]
 fn test_x9_143_2021_rsa_keyblock_8_5 ()  
@@ -227,6 +228,8 @@ fn test_x9_143_2021_aes_keyblock_8_1 ()
 {
     // Example from X9.143:2021, 8.1 Key Block Example
     // Same from X9.143:2022, 8.1 Key Block Example
+    // Same as ISO 20038:2017, Sample B1
+    // Same as ISO 20038:2023, 8.1 AES Key Block Example
     let mut key_block_factory =  KeyBlockDAes256::new(&hex!("88E1AB2A2E3DD38C 1FA039A536500CC8 A87AB9D62DC92C01 058FA79F44657DE6").into());
     
     key_block_factory.set_rng (| buf: &mut [u8]| -> i32 { buf.copy_from_slice( &hex!("1A87BBFA2CFe78D383e5f4c6aa83473c 1c2965473CE206bb855b01533782")); return 1; } );
@@ -258,6 +261,7 @@ fn test_x9_143_2021_aes_keyblock_8_1 ()
 fn test_x9_143_2021_aes_keyblock_8_2 () 
 {
     // Second example from ANSI X9.143:2021, 8.2 AES Key Block with Optional Blocks
+    // Same as ISO 20038:2023 8.2 Key Block with Optional Blocks
     let mut key_block_factory =  KeyBlockDAes256::new(&hex!("E38331FBACE33F0B 8694ABA5DC611CA2 0831949FEB898810 2147291578F704E1").into());
     
     key_block_factory.set_rng (|buf: &mut[u8]|->i32 { buf.copy_from_slice(&hex!("1a87bbfa2cfe78d383e5f4c6aa83")); return 1;});
@@ -637,14 +641,14 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
     
     /////////////////////////////////////////////////////////
     //
-    // ISO 20038
+    // ISO 20038:2017 B.2 CTR mode without padding, 
+    // Same as ISO 20038:2023 8.5 CTR mode without padding
     //
     ///
 
     #[test]
     fn test_iso_20038_b2 () 
     {
-        // ISO 20038:2017 B.2 CTR mode without padding
         //let mut key_block_factory =  KeyBlockFactory::<aes::Aes256,  flavours::KeyBlockFlavor3<aes::Aes256>>::new(&hex!("3235362d 62697420 41455320 77726170 70696e67 20284953 4f203230 30333829").into());
         let mut key_block_factory =  KeyBlockEAes256::new ( &hex!("3235362d 62697420 41455320 77726170 70696e67 20284953 4f203230 30333829" ).into());
       
@@ -718,4 +722,17 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
         
 
     }
-    
+
+
+    //
+    // Atalla key block
+    // Byte 0 - Version number of the format
+    // Byte 1 - Key Usage - ATM Master key, CVV, Data encryption, IV, key encryption, MAC, manuf defined, PIN encryption, Refeence PIN block, SIgnature....
+    // Byte 2 - Algorithm - Manuf defined, SHA-1, RC2/MD2, IBM3624, ANSI, Atalla, DES/3DES, EMV Key Derivation, AES ...
+    // Byte 3 - Mode of use - Encrypt, Decrypt,Generate, Verify, no restriction
+    // Byte 4 - Exportability
+    // Byte 5 - Padding flag
+    // Byte 6 - Special handling information
+    // Byte 7 - Other information
+    // 
+    // The 8 byte header is used as the IV to encrypt the key field
