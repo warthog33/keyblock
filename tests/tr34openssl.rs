@@ -67,6 +67,9 @@ use openssl::{pkey::Id};
 
 #[test]
 fn decode_b_2_1_1_ca_openssl() {
+    let r = openssl::provider::Provider::load(None, "legacy");
+    println! ( "{:?}", openssl::version::version());
+    println! ( "{:?}", r.err());
     let ca_key_pem = pem::parse(B_2_1_1_SAMPLE_ROOT_KEY_P12).unwrap();
     let ca_key_openssl = openssl::pkcs12::Pkcs12::from_der ( ca_key_pem.contents()).unwrap().parse2("TR34").unwrap();
 
