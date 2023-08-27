@@ -55,6 +55,7 @@ use cipher::{crypto_common::{
 
 pub mod key_block_crypto;
 pub mod tr34;
+pub mod tr34openssl;
 //pub mod keyblockfactory;
 //mod tests;
 

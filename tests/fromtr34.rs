@@ -1,30 +1,11 @@
 //use std::io::Read;
-use keyblock::tr34::{self, TR34RandomNumberToken, TR34KdhRebindToken, TR34KeyToken, TR34CaUnbindToken, TR34CaRebindToken, TR34Signed, TR34Enveloped};
+use keyblock::{tr34::{self, TR34RandomNumberToken, TR34KdhRebindToken, TR34KeyToken, TR34CaUnbindToken, TR34CaRebindToken, TR34Signed, TR34Enveloped}, tr34openssl::{TR34VerifyOpenssl, TR34DecryptOpenssl, TR34SignOpenssl}};
 
-use cipher::BlockDecryptMut;
-use cms::{content_info::{CmsVersion, ContentInfo}, enveloped_data::{RecipientInfos, OriginatorInfo, EnvelopedData, RecipientInfo}, cert::x509::{attr::{Attributes, Attribute}, crl::CertificateList}, signed_data::{SignedAttributes, SignerInfo}, revocation::RevocationInfoChoices};
-
-//use openssl::pkcs12::Pkcs12;
-use rsa::pkcs8::{der::asn1, spki::AlgorithmIdentifierOwned};
 
 use hex_literal::hex;
-//use sha1::Sha1;
-//use des::{TdesEde2};
 
+use der::{asn1::{ObjectIdentifier, OctetString, UtcTime}, Encode, Decode, Sequence, Any, EncodeValue, Length, oid::db::{rfc5911::{ID_MESSAGE_DIGEST, ID_CONTENT_TYPE, ID_AES_128_CBC, ID_DATA, ID_SIGNED_DATA}, rfc5912::{ID_SHA_1, ID_RSAES_OAEP, ID_MGF_1, ID_P_SPECIFIED, ID_SHA_256}, rfc6268::{ID_ENCRYPTED_DATA, ID_ENVELOPED_DATA}, rfc4519::COUNTRY_NAME}};
 
-// use asn1_der::{
-//     DerObject,
-//     typed::{ DerEncodable, DerDecodable }
-// };
-
-// use serde_asn1_der::{to_vec, from_bytes, AnyObject};
-
-// use serde_derive::{ Serialize, Deserialize };
-
-use der::{asn1::{ObjectIdentifier, OctetString, UtcTime}, Encode, Decode, Sequence, Any, EncodeValue, Length, oid::db::{rfc5911::{ID_MESSAGE_DIGEST, ID_CONTENT_TYPE, ID_SIGNED_DATA, ID_AES_128_CBC, ID_DATA}, rfc5912::{ID_SHA_1, ID_RSAES_OAEP, ID_MGF_1, ID_P_SPECIFIED, ID_SHA_256}, rfc6268::{ID_ENCRYPTED_DATA, ID_ENVELOPED_DATA}, rfc4519::COUNTRY_NAME}};
-
-
-//use serde_asn1_der::any::AnyObject;
 
 /* Root key sample from TR-34 2019, B.2.1.1 */
 pub const B_2_1_1_SAMPLE_ROOT_KEY_P12:&str = "-----BEGIN TR34_Sample_Root.p12-----\
@@ -930,11 +911,11 @@ pub const B_14_UBT_KDH_UNBIND:&str = "-----BEGIN TR34_Sample_UBT_KDH PEM File---
 
  #[derive(Clone, Debug, Eq, PartialEq, der::Sequence )]
 pub struct TR34Block2 {
-    pub version: u8,
+    pub version: cms::content_info::CmsVersion /*u8*/,
     pub issuer_and_serial_number: der::Any, //IssuerAndSerialNumber,
     pub clear_key: der::asn1::OctetString,
     //pub attribute_header: OidAndAttributeHeader,
-    pub attribute_header: Attribute,
+    pub attribute_header: cms::cert::x509::attr::Attribute,
 }
 
 /// Implementation of PFX container from PKCS#12
@@ -942,7 +923,7 @@ pub struct TR34Block2 {
 struct PFX {
     version: u8,
     //authsafe: PKCSData,
-    authsafe: ContentInfo,
+    authsafe: cms::content_info::ContentInfo,
     mac_data: MacData,
     //rr: Box<dyn AnyObject>,
     //modulus: Vec<u8>,
@@ -956,7 +937,7 @@ struct MacData {
 
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)] // NOTE: added `Sequence`
 struct DigestInfo {
-    digest_algorithm: AlgorithmIdentifierOwned, //AlgorithmIdentifier2, //ObjectIdentifier,
+    digest_algorithm: rsa::pkcs8::spki::AlgorithmIdentifierOwned, //AlgorithmIdentifier2, //ObjectIdentifier,
     digest: OctetString,
 }
 
@@ -992,11 +973,11 @@ struct SafeBag {
 /// Same as cms::EnvelopedData except the encryptedContentInfo.content_enc_alg
 #[derive(Clone, Debug, Eq, PartialEq, Sequence )]
 pub struct EnvelopedData2 {
-    pub version: CmsVersion,
-    pub originator_info: Option<OriginatorInfo>,
-    pub recip_infos: RecipientInfos,
+    pub version: cms::content_info::CmsVersion,
+    pub originator_info: Option<cms::enveloped_data::OriginatorInfo>,
+    pub recip_infos: cms::enveloped_data::RecipientInfos,
     pub encrypted_content: EncryptedContentInfo2,
-    pub unprotected_attrs: Option<Attributes>,
+    pub unprotected_attrs: Option<cms::cert::x509::attr::Attributes>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
@@ -1025,9 +1006,9 @@ pub struct AlgorithmIdentifier2 {
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Sequence)]
 pub struct RsaOaepParams {
-    hash_algorithm: AlgorithmIdentifierOwned,
-    mask_gen_algorithm: AlgorithmIdentifierOwned,
-    p_source_algorithm: AlgorithmIdentifierOwned,
+    hash_algorithm: rsa::pkcs8::spki::AlgorithmIdentifierOwned,
+    mask_gen_algorithm: rsa::pkcs8::spki::AlgorithmIdentifierOwned,
+    p_source_algorithm: rsa::pkcs8::spki::AlgorithmIdentifierOwned,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Sequence)]
@@ -1040,7 +1021,7 @@ pub struct Mgf1Params {
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
 pub struct 
 SignedData2 {
-    pub version: CmsVersion,
+    pub version: cms::content_info::CmsVersion,
     pub digest_algorithms: cms::signed_data::DigestAlgorithmIdentifiers,
     pub encap_content_info: cms::signed_data::EncapsulatedContentInfo,
     //todo consider defer decoding certs and CRLs
@@ -1050,7 +1031,24 @@ SignedData2 {
     pub signer_infos: cms::signed_data::SignerInfos,
 
     #[asn1(context_specific = "1", tag_mode = "IMPLICIT", optional = "true")]
-    pub crls: Option<RevocationInfoChoices>,
+    pub crls: Option<cms::revocation::RevocationInfoChoices>,
+}
+
+pub struct TR34EnvelopedToken {
+    env: cms::enveloped_data::EnvelopedData,
+}
+
+impl TR34EnvelopedToken {
+    pub fn from_der ( input: &[u8]) -> Result<TR34EnvelopedToken, keyblock::tr34::Error> {
+        let import = cms::enveloped_data::EnvelopedData::from_der(input)?;
+        Ok(TR34EnvelopedToken { env: import/* , verified: false*/ })
+    }
+}
+
+impl TR34Enveloped for TR34EnvelopedToken {
+    fn get_enveloped_data(&self) -> Result<cms::enveloped_data::EnvelopedData, keyblock::tr34::Error> {
+        return Ok(self.env.clone());
+    }
 }
 
 
@@ -1061,13 +1059,6 @@ pub fn get_cert_openssl(pem_contents: &str ) -> openssl::x509::X509 {
 }
 
 fn get_pub_key_openssl(pem_contents: &str ) -> openssl::pkey::PKey<openssl::pkey::Public> {
-    
-    // let key_pem = pem::parse(pem_contents).unwrap();
-    // let key_openssl = openssl::pkcs12::Pkcs12::from_der (key_pem.contents()).unwrap().parse2("TR34").unwrap();
-    // let cert = key_openssl.cert.unwrap();
-    // let public_key = cert.public_key().unwrap();
-    // //println! ( "root key subject_name={:?} subject_name_hash={:?}", cert.subject_name(), cert.subject_name_hash());
-    // public_key
     let cert = get_cert_openssl(pem_contents);
     return cert.public_key().unwrap();
 }
@@ -1078,37 +1069,16 @@ fn get_priv_key_openssl(pem_contents: &str ) -> openssl::pkey::PKey<openssl::pke
 }
 
 pub fn get_root_pub_key_openssl() -> openssl::pkey::PKey<openssl::pkey::Public> {
-    // let root_key_pem = pem::parse(B_2_1_1_SAMPLE_ROOT_KEY_P12).unwrap();
-    // let root_key_openssl = openssl::pkcs12::Pkcs12::from_der (root_key_pem.contents()).unwrap().parse2("TR34").unwrap();
-    // let root_cert = root_key_openssl.cert.unwrap();
-    // let root_public_key = root_cert.public_key().unwrap();
-    // println! ( "root key subject_name={:?} subject_name_hash={:?}", root_cert.subject_name(), root_cert.subject_name_hash());
-    // root_public_key
     return get_pub_key_openssl(B_2_1_1_SAMPLE_ROOT_KEY_P12);
 }
 pub fn get_ca_kdh_openssl() -> openssl::pkey::PKey<openssl::pkey::Public> {
-    // let ca_kdh_pem = pem::parse(B_2_1_2_TR34_SAMPLE_CA_KDH_KEY_P12).unwrap();
-    // let ca_kdh_openssl = openssl::pkcs12::Pkcs12::from_der (ca_kdh_pem.contents()).unwrap().parse2("TR34").unwrap();
-    // let ca_kdh_cert = ca_kdh_openssl.cert.unwrap();
-    // let ca_kdh_public_key = ca_kdh_cert.public_key().unwrap();
-    // println! ( "ca_kdh subject_name={:?} subject_name_hash={:?}", ca_kdh_cert.subject_name(), ca_kdh_cert.subject_name_hash());
-   
-    // ca_kdh_public_key
     return get_pub_key_openssl(B_2_1_2_TR34_SAMPLE_CA_KDH_KEY_P12);
 }
 pub fn get_ca_krd_openssl() -> openssl::pkey::PKey<openssl::pkey::Public> {
-    //let ca_krd_pem = pem::parse(B_2_1_4_TR34_SAMPLE_CA_KRD_KEY_P12).unwrap();
-    //let ca_krd_openssl = openssl::pkcs12::Pkcs12::from_der (ca_krd_pem.contents()).unwrap().parse2("TR34").unwrap();
-    //let ca_krd_public_key = ca_krd_openssl.cert.unwrap().public_key().unwrap();
-    //ca_krd_public_key
     return get_pub_key_openssl(B_2_1_4_TR34_SAMPLE_CA_KRD_KEY_P12);
 }
 
 fn get_kdh_1_pub_key() -> openssl::pkey::PKey<openssl::pkey::Public> {
-    //let kdh_1_pem = pem::parse(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12).unwrap();
-    //let kdh_1_openssl = openssl::pkcs12::Pkcs12::from_der (kdh_1_pem.contents()).unwrap().parse2("TR34").unwrap();
-    //let kdh_1_private_key = kdh_1_openssl.pkey.unwrap();
-    //kdh_1_private_key
     return get_pub_key_openssl(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12);
 }
 
@@ -1119,7 +1089,7 @@ fn get_cert_from_p12(pem_contents: &str) -> cms::cert::x509::Certificate {
 }
 fn get_cert_from_p7(pem_contents: &str) -> cms::cert::x509::Certificate {
     let der = pem::parse(pem_contents).unwrap();
-    let cms = ContentInfo::from_der(&der.contents()).unwrap();
+    let cms = cms::content_info::ContentInfo::from_der(&der.contents()).unwrap();
     let signed_data: cms::signed_data::SignedData = cms.content.decode_as().unwrap();
     if let cms::cert::CertificateChoices::Certificate(cert) = signed_data.certificates.unwrap().0.get(0).unwrap() {
         return cert.clone();
@@ -1131,7 +1101,6 @@ fn get_cert_from_p7(pem_contents: &str) -> cms::cert::x509::Certificate {
 
 
 fn get_ca_root_cert () -> cms::cert::x509::Certificate {
-    //return get_cert_from_p12(B_2_1_1_SAMPLE_ROOT_KEY_P12);
     return get_cert_from_p7(B_3_TR34_SAMPLE_ROOT_P7B);
 }
 fn get_ca_kdh_cert() -> cms::cert::x509::Certificate {
@@ -1142,43 +1111,16 @@ fn get_ca_krd_cert() -> cms::cert::x509::Certificate {
 }
 
 fn get_kdh_1_cert() -> cms::cert::x509::Certificate {
-    //let openssl_cert = get_cert_openssl(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12);
-    //let der = openssl_cert.to_der().unwrap();
-    //return cms::cert::x509::Certificate::from_der(&der).unwrap();
     return get_cert_from_p12(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12);
 }
 fn get_kdh_2_cert() -> cms::cert::x509::Certificate {
-    //let openssl_cert = get_cert_openssl(B_2_1_6_TR34_SAMPLE_KDH_2_KEY_P12);
-    //let der = openssl_cert.to_der().unwrap();
-    //return cms::cert::x509::Certificate::from_der(&der).unwrap();
     return get_cert_from_p12(B_2_1_6_TR34_SAMPLE_KDH_2_KEY_P12);
 }
 fn get_krd_1_cert() -> cms::cert::x509::Certificate {
-    //let openssl_cert = get_cert_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
-    //let der = openssl_cert.to_der().unwrap();
-    //return cms::cert::x509::Certificate::from_der(&der).unwrap();
     return get_cert_from_p12(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
 }
-//fn get_public_key_from_p12( p12string: &str ) -> openssl::pkey::PKey<openssl::pkey::Public> {
-    // let pem = pem::parse(p12string).unwrap();
-    // let pkcs12_in_openssl = openssl::pkcs12::Pkcs12::from_der (pem.contents()).unwrap().parse2("TR34").unwrap();
-    // let public_key = pkcs12_in_openssl.cert.unwrap().public_key().unwrap();
-    // public_key
-    //return get_pub_key_openssl()
-//}
-// fn get_private_key_from_p12( p12string: &str ) -> openssl::pkey::PKey<openssl::pkey::Private> {
-//     let pem = pem::parse(p12string).unwrap();
-//     let pkcs12_in_openssl = openssl::pkcs12::Pkcs12::from_der (pem.contents()).unwrap().parse2("TR34").unwrap();
-//     let private_key = pkcs12_in_openssl.pkey.unwrap();
-//     private_key
-
-// }
 pub fn get_krd_1_openssl() -> openssl::pkey::PKey<openssl::pkey::Private> {
     return get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
-    // let krd_1_pem = pem::parse(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12).unwrap();
-    // let krd_1_openssl = openssl::pkcs12::Pkcs12::from_der (krd_1_pem.contents()).unwrap().parse2("TR34").unwrap();
-    // let krd_1_private_key = krd_1_openssl.pkey.unwrap();
-    // krd_1_private_key
 }
 
 pub fn get_krd_1_pub_openssl() -> openssl::pkey::PKey<openssl::pkey::Public> {
@@ -1211,20 +1153,10 @@ fn decode_b_2_1_2_ca_kdh() {
 
     assert! ( contents2.f1.content_type == ID_ENCRYPTED_DATA);
     //let encrypted_data = cms::encrypted_data::EncryptedData::from_der(contents2.f1.content.value());
-    let _encrypted_data = contents2.f1.content.decode_as::<cms::encrypted_data::EncryptedData>();
-
-    //println! ( "{encrypted_data:?}");
-    //println! ( "{contents:?}");
-    //println! ( "{contents2:?}");
-
+   
     assert! ( contents2.f2.content_type == der::oid::db::rfc5911::ID_DATA);
-    //let data = contents2.f2.content.decode_as::<cms::content_info::ContentInfo>();
     let data = SafeContents::from_der(contents2.f2.content.value()).unwrap();
     assert!(data.b1.bag_id == ID_PKCS8_SHROUDED_KEY_BAG);
-    println! ( "{data:?}\n\nbagid={:?}", data.b1.bag_id);
-    //println! ( "{:?}", contents2.f1.content_type);
-    //println! ( "{:?}", contents2.f2.content_type);
-    //assert! ( kdh_key_cms.digest_algorithms == ID_COMMON_NAME);
 }
 
 #[test]
@@ -1272,7 +1204,7 @@ fn decode_b_2_2_1_6 (){
 fn decode_b_2_1_3_crl() {
     let crl_pem = pem::parse(B_2_1_3_TR34_SAMPLE_KDH_CRL).unwrap();
 
-    let crl = CertificateList::from_der ( crl_pem.contents()).unwrap();
+    let crl = cms::cert::x509::crl::CertificateList::from_der ( crl_pem.contents()).unwrap();
 
     assert! ( crl.tbs_cert_list.version == cms::cert::x509::Version::V2);
     assert! ( crl.tbs_cert_list.signature.oid == ID_SHA_256_WITH_RSA_ENCRYPTION2);
@@ -1331,23 +1263,17 @@ fn decode_b_2_2_2_4_aes_key_block() {
 
 #[test]
 fn decode_b_2_2_3_1_sample_tdea_enveloped_data() {
-    let mb_enveloped_data = EnvelopedData::from_der(pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA).unwrap().contents()).unwrap();
+    let mb_enveloped_data = cms::enveloped_data::EnvelopedData::from_der(pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA).unwrap().contents()).unwrap();
     let mb_enveloped_data_broken2 = EnvelopedData2::from_der(pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA_BROKEN).unwrap().contents()).unwrap();
-
+    let token = TR34EnvelopedToken::from_der( pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA).unwrap().contents()).unwrap();
     assert! ( mb_enveloped_data.encrypted_content.encrypted_content.as_ref().unwrap().as_bytes() == mb_enveloped_data_broken2.encrypted_content.content_enc_alg.parameters2.as_ref().unwrap().value()) ;
-    println! ("{:?}\n\n{:?}", mb_enveloped_data.encrypted_content, mb_enveloped_data_broken2.encrypted_content.content_enc_alg.parameters2.as_ref().unwrap().value());
-    //decrypt_enveloped_data2(&mb_enveloped_data_broken2, &get_krd_1_openssl());
     
-    assert! ( mb_enveloped_data.version == CmsVersion::V0);
+    assert! ( mb_enveloped_data.version == cms::content_info::CmsVersion::V0);
     assert! ( mb_enveloped_data.originator_info.is_none() );
     assert! ( mb_enveloped_data.unprotected_attrs.is_none());
     assert! ( mb_enveloped_data.recip_infos.0.is_empty()== false);
     assert! ( mb_enveloped_data.recip_infos.0.len() == 1);
     
-    assert! ( mb_enveloped_data.recip_infos.0.is_empty()== false);
-    assert! ( mb_enveloped_data.recip_infos.0.len() == 1);
-    // TODO - Parse recip_infos
-
     let recip_info = mb_enveloped_data.recip_infos.0.get(0).unwrap();
     let recip_ktri = match recip_info {
         cms::enveloped_data::RecipientInfo::Ktri ( v ) => v,
@@ -1360,7 +1286,6 @@ fn decode_b_2_2_3_1_sample_tdea_enveloped_data() {
     assert! ( recip_ktri.rid == cms::enveloped_data::RecipientIdentifier::IssuerAndSerialNumber(expected_recipient));
     assert! ( recip_ktri.key_enc_alg.parameters.is_some());
 
-    println! ( "XX={:?}", recip_ktri.key_enc_alg.parameters);
     assert! ( recip_ktri.enc_key.len() == Length::new(256) );
 
     let enc_alg_params = recip_ktri.key_enc_alg.parameters.as_ref().unwrap().decode_as::<RsaOaepParams>().unwrap();
@@ -1379,50 +1304,35 @@ fn decode_b_2_2_3_1_sample_tdea_enveloped_data() {
     assert! ( mb_encrypted_content_info.content_enc_alg.oid == der::oid::db::rfc5911::DES_EDE_3_CBC);
     assert! ( mb_encrypted_content_info.content_enc_alg.parameters.as_ref().unwrap().value() == hex!("0123456789ABCDEF"));
     
-    decrypt_enveloped_data(&mb_enveloped_data, &get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12)/*get_krd_1_openssl()*/);
+    let decryption_object = TR34DecryptOpenssl::new(
+            |id| {
+                assert! ( id == &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+                return get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
+            });
+    let decrypted_content = token.decrypt(decryption_object);
+    assert! ( decrypted_content.unwrap() == pem::parse(B_2_2_2_1_TR34_SAMPLE_TDEA_ENCRYPTED_CONTENT_FILE).unwrap().contents());
 
-    // decryption doesn't seem to work, instead use the known key
-    let encrypted_data = mb_encrypted_content_info.encrypted_content.unwrap();
-    
-    let key = hex!("0123456789ABCDEFFEDCBA9876543210FFEEDDCCBBAA9988");
-    let iv = mb_encrypted_content_info.content_enc_alg.parameters.unwrap();
-    let res_openssl = openssl::symm::decrypt ( openssl::symm::Cipher::des_ede3_cbc(), &key,  Some(iv.value()), encrypted_data.as_bytes());
-
-    //let y = <TdesEde2 as aead::KeyInit>::new(&hex!("0123456789ABCDEFFEDCBA9876543210").into());
-    let iv_as_gen_array = aead::generic_array::GenericArray::<u8,aead::consts::U8>::from_slice(iv.value());
-    let encryptor = <cbc::Decryptor::<des::TdesEde3> as cipher::KeyIvInit>::new(&key.into(), iv_as_gen_array);
-    let mut buffer = encrypted_data.as_bytes().clone().to_vec();
-    let res_nativerust = encryptor.decrypt_padded_mut::<cipher::block_padding::Pkcs7>(&mut buffer );
-
-    assert! ( res_openssl.as_ref().unwrap() == res_nativerust.as_ref().unwrap());
-    
-    let parsedblock = keyblock::tr34::TR34Block::from_der(res_nativerust.unwrap());
-    
-    assert! ( parsedblock.unwrap() == keyblock::tr34::TR34Block::from_der(pem::parse(B_2_2_2_1_TR34_SAMPLE_TDEA_ENCRYPTED_CONTENT_FILE).unwrap().contents()).unwrap());
-    
 }
 
 
 #[test]
 fn decode_b_2_2_3_2_sample_aes_enveloped_data() {
     
-    let mb_enveloped_data = EnvelopedData::from_der(pem::parse(B_2_2_3_2_AES_ENVELOPED_DATA).unwrap().contents()).unwrap();
+    let mb_enveloped_data = cms::enveloped_data::EnvelopedData::from_der(pem::parse(B_2_2_3_2_AES_ENVELOPED_DATA).unwrap().contents()).unwrap();
+    let token = TR34EnvelopedToken::from_der(pem::parse(B_2_2_3_2_AES_ENVELOPED_DATA).unwrap().contents()).unwrap();
 
     let mb_enveloped_data_broken = pem::parse(B_2_2_3_2_AES_ENVELOPED_DATA_BROKEN).unwrap();
     let mb_enveloped_data_broken2 = EnvelopedData2::from_der(mb_enveloped_data_broken.contents()).unwrap();
 
     assert! ( mb_enveloped_data.encrypted_content.encrypted_content.as_ref().unwrap().as_bytes() == mb_enveloped_data_broken2.encrypted_content.content_enc_alg.parameters2.as_ref().unwrap().value()) ;
     
-    decrypt_enveloped_data(&mb_enveloped_data, &get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12)/*get_krd_1_openssl()*/);
-    
-    assert! ( mb_enveloped_data.version == CmsVersion::V0);
+    assert! ( mb_enveloped_data.version == cms::content_info::CmsVersion::V0);
     assert! ( mb_enveloped_data.originator_info.is_none() );
     assert! ( mb_enveloped_data.originator_info.is_none());
     assert! ( mb_enveloped_data.unprotected_attrs.is_none());
     
     assert! ( mb_enveloped_data.recip_infos.0.is_empty()== false);
     assert! ( mb_enveloped_data.recip_infos.0.len() == 1);
-    // TODO - Parse recip_infos
     
     let recip_info = mb_enveloped_data.recip_infos.0.get(0).unwrap();
     let recip_ktri = match recip_info {
@@ -1435,15 +1345,13 @@ fn decode_b_2_2_3_2_sample_aes_enveloped_data() {
     let expected_recipient = cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap();
     assert! ( recip_ktri.rid == cms::enveloped_data::RecipientIdentifier::IssuerAndSerialNumber(expected_recipient));
     assert! ( recip_ktri.key_enc_alg.parameters.is_some());
+
     let enc_alg_params = recip_ktri.key_enc_alg.parameters.as_ref().unwrap().decode_as::<RsaOaepParams>().unwrap();
 
-    //println! ("enc_alg_params={recip_ktri:?}");
     assert! ( enc_alg_params.hash_algorithm.oid == ID_SHA_256 );
     assert! ( enc_alg_params.hash_algorithm.parameters.unwrap() == Any::new(der::Tag::Null, [0u8;0]).unwrap());
-   
     assert! ( enc_alg_params.mask_gen_algorithm.oid == ID_MGF_1);
     assert! ( enc_alg_params.mask_gen_algorithm.parameters.unwrap().decode_as::<Mgf1Params>().unwrap().hash_algorithm == ID_SHA_256 );
-    
     assert! ( enc_alg_params.p_source_algorithm.oid == ID_P_SPECIFIED);
     assert! ( enc_alg_params.p_source_algorithm.parameters.as_ref().unwrap() == &Any::new(der::Tag::OctetString, [0u8;0]).unwrap()); // empty
    
@@ -1453,44 +1361,37 @@ fn decode_b_2_2_3_2_sample_aes_enveloped_data() {
     assert! ( mb_encrypted_content_info.content_enc_alg.oid == ID_AES_128_CBC);
     assert! ( mb_encrypted_content_info.content_enc_alg.parameters.as_ref().unwrap().value() == hex!("0123456789ABCDEF"));
     
-    let encrypted_data = mb_encrypted_content_info.encrypted_content.unwrap();
+    // Has a mistake in AES decryption, see patches in TR34DecryptCEKOpenssl.decrypt_content
+    let decryption_object = TR34DecryptOpenssl::new(|id| {
+        assert!(id == &get_b_2_2_1_6_krd_1_id());
+        return get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
+    });
+    let decrypted_content = token.decrypt(decryption_object).unwrap();
+    println! ( "Faulty sample, the decrypted content should use TR34Block, not the modified TRBlock2");
+    let parsedblock2 = TR34Block2::from_der(&decrypted_content).unwrap();
+    println! ( "Faulty sample, the issuer and serial number field does not parse and is different to the expected value");
+    assert! ( parsedblock2.issuer_and_serial_number != Any::from_der(&get_b_2_2_1_4_kdh_1_id().to_der().unwrap()).unwrap());
+    assert! ( parsedblock2.version == cms::content_info::CmsVersion::V1);
+    assert! ( parsedblock2.clear_key.as_bytes() == hex!("0123456789ABCDEFFEDCBA9876543210"));
+    assert! ( parsedblock2.attribute_header.oid == der::oid::db::rfc5911::ID_DATA);
 
-    println! ( "mb_encrypted_data = ({}){encrypted_data:?}\n\niv={:?}", encrypted_data.len(), mb_encrypted_content_info.content_enc_alg);
-        
-    let ky = hex!("0123456789ABCDEFFEDCBA9876543210");
-    //let iv = mb_encrypted_content_info.content_enc_alg.parameters.unwrap(); // IV is incorrect, only 8 bytes
-    let iv = hex!("0123456789ABCDEF0123456789ABCDEF");
-    let res_openssl = openssl::symm::decrypt ( openssl::symm::Cipher::aes_128_cbc(), &ky,  Some(&iv), encrypted_data.as_bytes());
+    println! ( "Faulty sample, the reference in the following assertion D0256K0AB00E0000");
+    assert! ( parsedblock2.attribute_header.values.get(0).unwrap().value() == "A0256K0TB00E0000".as_bytes());
 
-    //let y = <TdesEde2 as aead::KeyInit>::new(&hex!("0123456789ABCDEFFEDCBA9876543210").into());
-    let encryptor = <cbc::Decryptor::<aes::Aes128> as cipher::KeyIvInit>::new(&ky.into(), &iv.into());
-    let mut buffer = encrypted_data.as_bytes().clone().to_vec();
-    let res_native_rust = encryptor.decrypt_padded_mut::<cipher::block_padding::Pkcs7>(&mut buffer );
-    
-    // Aaagh, doesn't decode propertly, don't think its a properly formatted blocK!
-    let parsedblock = TR34Block2::from_der(res_native_rust.unwrap());
-    
-    println! ( "\n1={:?}\ndecrypted={:?}\nexpected={:?}\n\nas_parse={:?}\nexpectd={:?}", res_openssl, res_native_rust, get_b_2_2_2_1_tdea_content_file().to_der(), parsedblock, get_b_2_2_2_1_tdea_content_file());
+    println! ( "Faulty sample, the inequality in the following assertion should be an equality");
+    assert! ( decrypted_content != pem::parse(B_2_2_2_4_SAMPLE_AES_KEY_BLOCK_USING_ISSUER_AND_SERIAL_NUMBER).unwrap().contents());
 
-    //assert! ( parsedblock.unwrap() == get_b_2_2_2_4_aes_content_file());
-    
 }
 
-// fn get_der<'a, T:Decode<'a> + ToOwned<Owned=T>> ( pem_file_contents: &str ) -> T {
-//      let pem = pem::parse(pem_file_contents).unwrap();
-//      let pem_contents = pem.contents();
-//      let rc = T::from_der(pem_contents).unwrap();
-//      return rc.to_owned();
-// }
+
 
 #[test]
 fn test_b_2_2_4_1_signed_attributes () {
     let pem = pem::parse(B_2_2_4_SAMPLE_SIGNED_ATTRIBUTES_1_PASS_DER).unwrap();
-    let context_specific = Any::from_der(pem.contents()).unwrap();
-    //let context_specific = get_der::<Any>(B_2_2_4_1_SAMPLE_SIGNED_ATTRIBUTES_1_PASS_DER);
-    let signed_attrs = Any::new( der::Tag::Set, context_specific.value()).unwrap().decode_as::<SignedAttributes>().unwrap();
-    //let signed_attrs = signed_attrs_as_any.decode_as::<SignedAttributes>().unwrap();
-    //let signed_attrs = SignedAttributes::from_der(&signed_attrs_as_any.to_der().unwrap()).unwrap();
+    // Need to use a reader so can call decode_implicit, otherwise decode explicit is called
+    let mut reader = der::SliceReader::new(&pem.contents()).unwrap();
+    let ctx = der::asn1::ContextSpecific::<cms::signed_data::SignedAttributes>::decode_implicit(&mut reader, der::TagNumber::new(0));
+    let signed_attrs = ctx.unwrap().unwrap().value;
 
     assert! ( signed_attrs.len() == 4);
 
@@ -1502,16 +1403,15 @@ fn test_b_2_2_4_1_signed_attributes () {
     let signed_attr_2 = signed_attrs.get(1).unwrap();
     assert! ( signed_attr_2.oid == der::oid::db::rfc5911::ID_SIGNING_TIME);
     assert! ( signed_attr_2.values.len() == 1);
-    let t = UtcTime::from_unix_duration(std::time::Duration::from_secs(1581362033));
-    assert! ( signed_attr_2.values.get(0).unwrap().decode_as::<UtcTime>().unwrap() == t.unwrap());
+    let time = UtcTime::from_unix_duration(std::time::Duration::from_secs(1581362033));
+    assert! ( signed_attr_2.values.get(0).unwrap().decode_as::<UtcTime>().unwrap() == time.unwrap());
 
     let signed_attr_3 = signed_attrs.get(2).unwrap();
     assert! ( signed_attr_3.oid == ID_DATA);
     assert! ( signed_attr_3.values.len() == 1);
-    assert! ( signed_attr_3.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, hex!("41303235364B30544230304530303030")).unwrap() );
-
+    assert! ( signed_attr_3.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, "A0256K0TB00E0000".as_bytes()).unwrap() );
+    
     let signed_attr_4 = signed_attrs.get(3).unwrap();
-    //println!( "signer_info={:?}", signed_attrs.get(3));
     assert! ( signed_attr_4.oid == ID_MESSAGE_DIGEST);
     assert! ( signed_attr_4.values.len() == 1);
     
@@ -1520,9 +1420,8 @@ fn test_b_2_2_4_1_signed_attributes () {
 
 #[test]
 fn test_b_2_2_5_1_signed_attributes_2_pass () {
-    let signed_attrs = SignedAttributes::from_der ( pem::parse(B_2_2_5_SAMPLE_AUTHENTICATED_ATTRIBUTES_2_PASS_PEM).unwrap().contents()).unwrap();
-    //let signed_attrs = get_b_2_2_5_auth_attr_2_pass();
-
+    let signed_attrs = cms::signed_data::SignedAttributes::from_der ( pem::parse(B_2_2_5_SAMPLE_AUTHENTICATED_ATTRIBUTES_2_PASS_PEM).unwrap().contents()).unwrap();
+    
     assert! ( signed_attrs.len() == 4);
 
     let signed_attr_1 = signed_attrs.get(0).unwrap();
@@ -1534,16 +1433,14 @@ fn test_b_2_2_5_1_signed_attributes_2_pass () {
     let signed_attr_2 = signed_attrs.get(1).unwrap();
     assert! ( signed_attr_2.oid == ID_DATA);
     assert! ( signed_attr_2.values.len() == 1);
-    assert! ( signed_attr_2.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, hex!("41303235364B30544230304530303030")).unwrap() );
+    assert! ( signed_attr_2.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, "A0256K0TB00E0000".as_bytes()).unwrap() );
 
     let signed_attr_3 = signed_attrs.get(2).unwrap();
-    println! ( "{signed_attr_2:?}");
     assert! ( signed_attr_3.oid == tr34::ID_RANDOM_NONCE);
     assert! ( signed_attr_3.values.len() == 1);
     assert! ( signed_attr_3.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, hex!("167EB0E72781E4940112233445566778")).unwrap());
 
     let signed_attr_4 = signed_attrs.get(3).unwrap();
-    //println!( "signer_info={:?}", signed_attrs.get(3));
     assert! ( signed_attr_4.oid == ID_MESSAGE_DIGEST);
     assert! ( signed_attr_4.values.len() == 1);
     
@@ -1554,13 +1451,12 @@ fn test_b_2_2_5_1_signed_attributes_2_pass () {
 
 #[test]
 fn decode_b_3 () {
-    //let mb_content_info = get_b_3_ca_root();
-    let mb_content_info = ContentInfo::from_der(pem::parse(B_3_TR34_SAMPLE_ROOT_P7B).unwrap().contents()).unwrap();
+    let mb_content_info = cms::content_info::ContentInfo::from_der(pem::parse(B_3_TR34_SAMPLE_ROOT_P7B).unwrap().contents()).unwrap();
 
-    assert! ( mb_content_info.content_type == ID_SIGNED_DATA);
+    assert! ( mb_content_info.content_type == der::oid::db::rfc5911::ID_SIGNED_DATA);
 
     let signed_data: cms::signed_data::SignedData = mb_content_info.content.decode_as().unwrap();
-    assert! ( signed_data.version == CmsVersion::V1);
+    assert! ( signed_data.version == cms::content_info::CmsVersion::V1);
     assert! ( signed_data.digest_algorithms.len()==0);
     assert! ( signed_data.crls.is_none());
     assert! ( signed_data.signer_infos.0.is_empty());
@@ -1572,13 +1468,12 @@ fn decode_b_3 () {
 
 #[test]
 fn decode_b_4 () {
-    //let mb_content_info = get_b_4_ca_kdh();
-    let mb_content_info = ContentInfo::from_der(pem::parse(B_4_CA_KDH_P7B).unwrap().contents()).unwrap();
+    let mb_content_info = cms::content_info::ContentInfo::from_der(pem::parse(B_4_CA_KDH_P7B).unwrap().contents()).unwrap();
 
-    assert! ( mb_content_info.content_type == ID_SIGNED_DATA);
+    assert! ( mb_content_info.content_type == der::oid::db::rfc5911::ID_SIGNED_DATA);
 
     let signed_data: cms::signed_data::SignedData = mb_content_info.content.decode_as().unwrap();
-    assert! ( signed_data.version == CmsVersion::V1);
+    assert! ( signed_data.version == cms::content_info::CmsVersion::V1);
     assert! ( signed_data.digest_algorithms.len()==0);
     assert! ( signed_data.crls.is_none());
     assert! ( signed_data.signer_infos.0.is_empty());
@@ -1590,13 +1485,12 @@ fn decode_b_4 () {
 
 #[test]
 fn decode_b_5 () {
-    //let mb_content_info = get_b_5_ca_krd();
-    let mb_content_info = ContentInfo::from_der(pem::parse(B_5_SAMPLE_CA_KRD_P7B).unwrap().contents()).unwrap();
+    let mb_content_info = cms::content_info::ContentInfo::from_der(pem::parse(B_5_SAMPLE_CA_KRD_P7B).unwrap().contents()).unwrap();
 
-    assert! ( mb_content_info.content_type == ID_SIGNED_DATA);
+    assert! ( mb_content_info.content_type == der::oid::db::rfc5911::ID_SIGNED_DATA);
 
     let signed_data: cms::signed_data::SignedData = mb_content_info.content.decode_as().unwrap();
-    assert! ( signed_data.version == CmsVersion::V1);
+    assert! ( signed_data.version == cms::content_info::CmsVersion::V1);
     assert! ( signed_data.digest_algorithms.len()==0);
     assert! ( signed_data.crls.is_none());
     assert! ( signed_data.signer_infos.0.is_empty());
@@ -1609,24 +1503,21 @@ fn decode_b_5 () {
 
 #[test]
 fn decode_b_6_kdh_credential_token () {
-    //let token = get_b_6_kdh_token_with_crl ();
-    let token = ContentInfo::from_der(pem::parse(B_6_KDH_1_W_CRL_PEM).unwrap().contents()).unwrap();
-    assert! (token.content_type == ID_SIGNED_DATA);
+    let token = cms::content_info::ContentInfo::from_der(pem::parse(B_6_KDH_1_W_CRL_PEM).unwrap().contents()).unwrap();
+    assert! (token.content_type == der::oid::db::rfc5911::ID_SIGNED_DATA);
 
     let signed_data_broken = token.content.decode_as::<cms::signed_data::SignedData>(); // not sure why this pem isnt valid....
     assert! ( signed_data_broken.is_err());
 
-    println! ( "raw_signed_data={:?}", pem::parse(B_6_KDH_1_W_CRL_PEM).unwrap().contents());
     // Use our own dodgy SignedData2 structure to decode 
+    println! ( "Broken sample, b.6 has malformed SignedData");
     let signed_data = token.content.decode_as::<SignedData2>().unwrap();
     
-    assert! ( signed_data.version == CmsVersion::V1);
+    assert! ( signed_data.version == cms::content_info::CmsVersion::V1);
     assert! ( signed_data.certificates.is_some());
-    println! ( "certs={:?}", signed_data.certificates.to_der());
     assert! ( signed_data.certificates.unwrap().0.into_vec() == vec![cms::cert::CertificateChoices::Certificate(get_kdh_1_cert())]);
+ 
     assert! ( signed_data.crls.is_some());
-    println! ( "crls={:?}", signed_data.crls.to_der());
-
     assert! ( signed_data.crls.unwrap().0.into_vec() == vec![cms::revocation::RevocationInfoChoice::Crl(get_ca_kdh_crl())]);
     assert! ( signed_data.signer_infos.0.is_empty());
     assert! ( signed_data.digest_algorithms.is_empty());
@@ -1637,11 +1528,11 @@ fn decode_b_6_kdh_credential_token () {
 
 #[test]
 fn decode_b_7_krd_credential_token () {
-    let token = ContentInfo::from_der(pem::parse(B_7_KRD_CREDENTIAL_TOKEN_1_P7B).unwrap().contents()).unwrap();
+    let token = cms::content_info::ContentInfo::from_der(pem::parse(B_7_KRD_CREDENTIAL_TOKEN_1_P7B).unwrap().contents()).unwrap();
     assert! (token.content_type == ID_SIGNED_DATA);
 
     let signed_data = token.content.decode_as::<cms::signed_data::SignedData>().unwrap();
-    assert! ( signed_data.version == CmsVersion::V1);
+    assert! ( signed_data.version == cms::content_info::CmsVersion::V1);
     assert! ( signed_data.certificates.unwrap().0.into_vec() == vec![cms::cert::CertificateChoices::Certificate(get_krd_1_cert())]);
     assert! ( signed_data.crls.is_none());
     assert! ( signed_data.signer_infos.0.is_empty());
@@ -1655,25 +1546,22 @@ fn decode_b_7_krd_credential_token () {
 
 #[test]
 fn decode_b_8_ktkdh_1_pass() {
-    let mb_content_info = ContentInfo::from_der(pem::parse(B_8_ONE_PASS_KEY_TOKEN).unwrap().contents()).unwrap();
-    let key_token = TR34KeyToken::from_der(pem::parse(B_8_ONE_PASS_KEY_TOKEN).unwrap().contents()).unwrap();
+    let mb_content_info = cms::content_info::ContentInfo::from_der(pem::parse(B_8_ONE_PASS_KEY_TOKEN).unwrap().contents()).unwrap();
      
-    //assert! ( mb_content_info.content_type == PKCS7_SIGNED_DATA_OID);
+    assert! ( mb_content_info.content_type == ID_SIGNED_DATA);
 
     let mb_signed_data: cms::signed_data::SignedData = mb_content_info.content.decode_as().unwrap();
+    let key_token = TR34KeyToken::from_der(pem::parse(B_8_ONE_PASS_KEY_TOKEN).unwrap().contents()).unwrap();
     let mb_signed_data2 = key_token.get_outer_signed_data().unwrap();
-
+   
     assert! ( mb_signed_data == mb_signed_data2);
 
-    assert! ( mb_signed_data.version == CmsVersion::V1);
-    //assert! ( mb_signed_data.digest_algorithms.len()==1);
-    //assert! ( mb_signed_data.digest_algorithms.get(0).unwrap().oid ==ID_SHA_256);
-    //assert! ( mb_signed_data.digest_algorithms.get(0).unwrap().parameters.is_none());
-    assert! ( mb_signed_data.digest_algorithms.as_ref().to_vec() == vec![AlgorithmIdentifierOwned{oid:ID_SHA_256,parameters: None }]);
+    assert! ( mb_signed_data.version == cms::content_info::CmsVersion::V1);
+    assert! ( mb_signed_data.digest_algorithms.as_ref().to_vec() == vec![rsa::pkcs8::spki::AlgorithmIdentifierOwned{oid:ID_SHA_256,parameters: None }]);
     assert! ( mb_signed_data.certificates.is_none());
-    assert! ( mb_signed_data.crls.clone().unwrap().0.into_vec() == vec![cms::revocation::RevocationInfoChoice::Crl(CertificateList::from_der ( pem::parse(B_2_1_3_TR34_SAMPLE_KDH_CRL).unwrap().contents()).unwrap())]);
+    assert! ( mb_signed_data.crls.clone().unwrap().0.into_vec() == vec![cms::revocation::RevocationInfoChoice::Crl(cms::cert::x509::crl::CertificateList::from_der ( pem::parse(B_2_1_3_TR34_SAMPLE_KDH_CRL).unwrap().contents()).unwrap())]);
     
-    assert! ( key_token.get_crl().unwrap().0.into_vec() == vec![cms::revocation::RevocationInfoChoice::Crl(CertificateList::from_der ( pem::parse(B_2_1_3_TR34_SAMPLE_KDH_CRL).unwrap().contents()).unwrap())]);
+    assert! ( key_token.get_crl().unwrap().0.into_vec() == vec![cms::revocation::RevocationInfoChoice::Crl(cms::cert::x509::crl::CertificateList::from_der ( pem::parse(B_2_1_3_TR34_SAMPLE_KDH_CRL).unwrap().contents()).unwrap())]);
         
     assert! ( mb_signed_data.signer_infos.0.len() == 1);
     let signer_info = mb_signed_data.signer_infos.0.get(0).unwrap();
@@ -1686,88 +1574,35 @@ fn decode_b_8_ktkdh_1_pass() {
     assert! ( signer_info.signed_attrs.as_ref().unwrap() == &get_b_2_2_4_signed_attr_1_pass());
     assert! ( signer_info.unsigned_attrs.is_none() );
 
-    assert! ( key_token.get_key_block_header() == hex!("41303235364b30544230304530303030"));
-    assert! ( key_token.get_timestamp() == UtcTime::from_unix_duration(std::time::Duration::from_secs(1581362033)).unwrap());
     
-    assert! ( verify_signature_openssl(&mb_signed_data, &get_kdh_1_pub_key()) == true);
-
-    // Second go at signature verify
-    //assert! ( key_token.get_signer_id() == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
+    assert! ( key_token.get_timestamp().unwrap() == UtcTime::from_unix_duration(std::time::Duration::from_secs(1581362033)).unwrap());
     key_token.get_cms();
-    assert! ( key_token.verify_signature(|message: &[u8], signer_info: &SignerInfo| { 
-        assert! ( signer_info.version == cms::content_info::CmsVersion::V1);
-        assert! ( signer_info.sid == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
-        assert! ( signer_info.digest_alg.oid == ID_SHA_256);
-        assert! ( signer_info.digest_alg.parameters.is_none());
-        assert! ( signer_info.signature_algorithm.oid == der::oid::db::rfc5912::RSA_ENCRYPTION); // ID_SHA_256_WITH_RSA_ENCRYPTION);
-        assert! ( signer_info.signature_algorithm.parameters.as_ref().unwrap() == &Any::new(der::Tag::Null, [0u8;0]).unwrap());
-
-        let ca_krd = get_kdh_1_pub_key();
-        let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &ca_krd).unwrap();
-        verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
     
-        return verifier.verify_oneshot(signer_info.signature.as_bytes(), message).unwrap();}) == true);
-    
-    
-    // assert! (mb_signed_data.encap_content_info.econtent_type == ID_ENVELOPED_DATA);
-    // let mb_econtent = mb_signed_data.encap_content_info.econtent.unwrap();
-
-    // let mb_enveloped_data = EnvelopedData::from_der ( mb_econtent.value()).unwrap();
-    // let mb_enveloped_data2 = key_token.get_inner_enveloped_data();
-
-    // assert! ( mb_enveloped_data == mb_enveloped_data2);
-    assert! ( key_token.get_inner_enveloped_data().unwrap() == EnvelopedData::from_der(pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA).unwrap().contents()).unwrap());
-
-    // Decrypt using new method
-    let x = key_token.decrypt_enveloped_data2( |recip_info: &RecipientInfo| {
-        let recip_ktri = match recip_info {
-            cms::enveloped_data::RecipientInfo::Ktri ( v ) => v,
-            _ => panic!("unhandled enum type"),
-        };
-            
-        assert! ( recip_ktri.version == cms::content_info::CmsVersion::V0 );
-        assert! ( recip_ktri.key_enc_alg.oid == ID_RSAES_OAEP);
-        let expected_recipient = cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap();
-        assert! ( recip_ktri.rid == cms::enveloped_data::RecipientIdentifier::IssuerAndSerialNumber(expected_recipient));
-        let enc_alg_params = recip_ktri.key_enc_alg.parameters.as_ref().unwrap().decode_as::<RsaOaepParams>().unwrap();
-        //assert! ( enc_alg_params.hash_algorithm.oid == ID_SHA_256 );
-        //assert! ( enc_alg_params.hash_algorithm.parameters.unwrap() == Any::new(der::Tag::Null, [0u8;0]).unwrap());
-        assert! ( enc_alg_params.mask_gen_algorithm.oid == ID_MGF_1);
-        assert! ( enc_alg_params.mask_gen_algorithm.parameters.unwrap().decode_as::<Mgf1Params>().unwrap().hash_algorithm == ID_SHA_256 );
-        //assert! ( enc_alg_params.p_source_algorithm.oid == ID_P_SPECIFIED);
-        //assert! ( enc_alg_params.p_source_algorithm.parameters.as_ref().unwrap() == &Any::new(der::Tag::OctetString, [0u8;0]).unwrap()); // empty
-
-        assert! ( enc_alg_params.hash_algorithm == AlgorithmIdentifierOwned { oid: ID_SHA_256, parameters: Some(Any::new(der::Tag::Null, [0u8;0]).unwrap())});
-        //assert! ( enc_alg_params.mask_gen_algorithm == AlgorithmIdentifierOwned { oid: ID_MGF_1})
-        assert! ( enc_alg_params.p_source_algorithm == AlgorithmIdentifierOwned { oid: ID_P_SPECIFIED, parameters: Some(Any::new(der::Tag::OctetString, [0u8;0]).unwrap())});
-      
-        assert! ( recip_ktri.enc_key.len() == Length::new(256) );
-
-        let key_rsa = get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12)/*get_krd_1_openssl()*/.rsa().unwrap();
-    
-        let mut buff = [0u8; 256];
-    
-        //decryptor.set_rsa_oaep_label(enc_alg_params.p_source_algorithm.parameters.unwrap().value());
-        //decryptor.set_rsa_oaep_label(&[0u8;0]).unwrap();
-        let inbuff = recip_ktri.enc_key.as_bytes();
-    
-        //let padding = rsa::Oaep::new_with_mgf_hash::<sha2::Sha512, sha2::Sha512>();
-        //let padding = Pkcs1v15Encrypt::default();
-            
-        let res = key_rsa.private_decrypt(inbuff, &mut buff, openssl::rsa::Padding::NONE);
-    
-        println! ( "res={res:?} {:x},{:x}", buff[0], buff[1]);
-        //let mb_encrypted_content_info = &envelope.encrypted_content;
-        
-        //assert! ( mb_encrypted_content_info.content_type == PKCS7_DATA_OID);
-        //assert! ( mb_encrypted_content_info.content_enc_alg.oid == ID_DES_EDE_3_CBC);
-        //assert! ( mb_encrypted_content_info.content_enc_alg.parameters.as_ref().unwrap().value() == hex!("0123456789ABCDEF"));
-        
-        //let encrypted_data = mb_encrypted_content_info.encrypted_content.as_ref().unwrap();
-        //println! ( "mb_encrypted_data = ({}){encrypted_data:?}", encrypted_data.len());
-        return true;
+    let verify_with_kdh_1_openssl = TR34VerifyOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
+        return get_kdh_1_pub_key();
     });
-    assert! ( x == true)
+    assert! ( key_token.verify_signature(verify_with_kdh_1_openssl) == true);
+    assert! ( key_token.get_inner_enveloped_data().unwrap() == cms::enveloped_data::EnvelopedData::from_der(pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA).unwrap().contents()).unwrap());
+
+    let decrypt_using_krd_openssl = keyblock::tr34openssl::TR34DecryptOpenssl::new ( 
+        | id| {
+        assert! ( id == &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+        return get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
+    });
+
+    let decryped_payload: Result<Vec<u8>, tr34::Error> = key_token.decrypt(decrypt_using_krd_openssl);
+    assert! ( decryped_payload.is_ok());
+    assert! ( decryped_payload.unwrap() == pem::parse(B_2_2_2_3_TR34_SAMPLE_TDEA_ENCRYPTED_CONTENT_PEM).unwrap().contents());
+
+    assert! ( key_token.get_key_block_header().unwrap() == "A0256K0TB00E0000".as_bytes());
+
+    let key_block_header = key_token.get_key_block_header2().unwrap();
+    assert! ( key_block_header.get_version() == keyblock::KeyBlockVersion::A_KEY_VARIANT);
+    assert! ( key_block_header.get_usage() == keyblock::KeyUsage("K0"));
+    assert! ( key_block_header.get_algorithm() == keyblock::KeyAlgorithm::TDES);
+    assert! ( key_block_header.get_mode() == keyblock::KeyMode::B_ENCRYPT_WRAP_DECRYPT_UNWRAP);
+    assert! ( key_block_header.get_exportability() == keyblock::KeyExportability::E_EXPORTABLE);
     
         
 }
@@ -1779,12 +1614,9 @@ fn decode_b_8_ktkdh_1_pass() {
 fn decode_b_9_ktkdh_2_pass() {
     let key_token = TR34KeyToken::from_der( pem::parse(B_9_TWO_PASS_TOKEN).unwrap().contents()).unwrap();
 
-    //assert! ( mb_content_info.content_type == PKCS7_SIGNED_DATA_OID);
     let signed_data = key_token.get_outer_signed_data().unwrap();
     
-    //assert! ( signed_data.signer_infos.0.as_ref().get(0).as_ref().unwrap().signed_attrs.as_ref().unwrap() == &get_b_2_2_5_auth_attr_2_pass());
-    
-    assert! ( signed_data.version == CmsVersion::V1);
+    assert! ( signed_data.version == cms::content_info::CmsVersion::V1);
     assert! ( signed_data.digest_algorithms.len()==1);
     assert! ( signed_data.digest_algorithms.get(0).unwrap().oid ==ID_SHA_256);
     assert! ( signed_data.digest_algorithms.get(0).unwrap().parameters.is_none());
@@ -1813,45 +1645,43 @@ fn decode_b_9_ktkdh_2_pass() {
     let signed_attr_2 = signed_attrs.get(1).unwrap();
     assert! ( signed_attr_2.oid == ID_DATA);
     assert! ( signed_attr_2.values.len() == 1);
-    assert! ( signed_attr_2.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, hex!("41303235364B30544230304530303030")).unwrap() );
+    assert! ( signed_attr_2.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, "A0256K0TB00E0000".as_bytes()).unwrap());
 
-    assert! ( key_token.get_key_block_header() == hex!("41303235364B30544230304530303030"));
-
+    assert! ( key_token.get_key_block_header().unwrap() == "A0256K0TB00E0000".as_bytes());
+                                                   
     let signed_attr_3 = signed_attrs.get(2).unwrap();
     assert! ( signed_attr_3.oid == tr34::ID_RANDOM_NONCE);
     assert! ( signed_attr_3.values.len() == 1);
     assert! ( signed_attr_3.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, [22,126,176,231,39,129,228,148,1,18,35,52,69,86,103,120]).unwrap() );
 
-    assert! ( key_token.get_random_number() == [22,126,176,231,39,129,228,148,1,18,35,52,69,86,103,120]);
+    assert! ( key_token.get_random_number().unwrap() == [22,126,176,231,39,129,228,148,1,18,35,52,69,86,103,120]);
 
     let signed_attr_4 = signed_attrs.get(3).unwrap();
     assert! ( signed_attr_4.oid == ID_MESSAGE_DIGEST);
     assert! ( signed_attr_4.values.len() == 1);
 
-    let verify_result = verify_signature_openssl(&signed_data, &get_kdh_1_pub_key());
-    assert!( verify_result == false); // Not sure why signature verification is failing
+    let verify_with_kdh_1 = TR34VerifyOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
+        return get_kdh_1_pub_key();
+    });
+    assert! ( key_token.verify_signature(verify_with_kdh_1) == false);
 
-    // Second go at signature verify
-    assert! ( key_token.verify_signature(|message: &[u8], signer_info: &SignerInfo| { 
-        assert! ( signer_info.version == cms::content_info::CmsVersion::V1);
-        assert! ( signer_info.sid == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
-        assert! ( signer_info.digest_alg.oid == ID_SHA_256);
-        assert! ( signer_info.digest_alg.parameters.is_none());
-        assert! ( signer_info.signature_algorithm.oid == der::oid::db::rfc5912::RSA_ENCRYPTION); // ID_SHA_256_WITH_RSA_ENCRYPTION);
-        assert! ( signer_info.signature_algorithm.parameters.as_ref().unwrap() == &Any::new(der::Tag::Null, [0u8;0]).unwrap());
-        assert! ( signer_info.signed_attrs == Some(get_b_2_2_5_auth_attr_2_pass()));
-        assert! ( signer_info.unsigned_attrs.is_none() );
-        let ca_krd = get_kdh_1_pub_key();
-        let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &ca_krd).unwrap();
-        verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-        return verifier.verify_oneshot(signer_info.signature.as_bytes(), message).unwrap();}) == false);
- 
     assert! (signed_data.encap_content_info.econtent_type == ID_ENVELOPED_DATA);
     assert! (signed_data.encap_content_info.econtent.as_ref().unwrap().header().unwrap().tag == der::Tag::OctetString);
     
-    let mb_enveloped_data = EnvelopedData::from_der ( signed_data.encap_content_info.econtent.unwrap().value()).unwrap();
+    let mb_enveloped_data = cms::enveloped_data::EnvelopedData::from_der ( signed_data.encap_content_info.econtent.unwrap().value()).unwrap();
+    assert! ( mb_enveloped_data == cms::enveloped_data::EnvelopedData::from_der ( pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA).unwrap().contents()).unwrap());
 
-    assert! ( mb_enveloped_data == EnvelopedData::from_der ( pem::parse(B_2_2_3_1_TDEA_ENVELOPED_DATA).unwrap().contents()).unwrap());
+    let decrypt_with_krd = TR34DecryptOpenssl::new (
+        | id | {
+            assert! ( id == &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+            return get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12)
+        } );
+
+    let decrypted_payload = key_token.decrypt(decrypt_with_krd).unwrap();
+    assert! ( decrypted_payload == pem::parse(B_2_2_2_3_TR34_SAMPLE_TDEA_ENCRYPTED_CONTENT_PEM).unwrap().contents());
+
+
 }
 
 
@@ -1860,14 +1690,14 @@ fn decode_b_9_ktkdh_2_pass() {
 
 #[test]
 fn decode_b_10_ca_rebind_token() {
-    let rbt_content_info = ContentInfo::from_der(pem::parse(B_10_TR34_SAMPLE_RBT_CA_UNBIND_PEM).unwrap().contents()).unwrap();
+    let rbt_content_info = cms::content_info::ContentInfo::from_der(pem::parse(B_10_TR34_SAMPLE_RBT_CA_UNBIND_PEM).unwrap().contents()).unwrap();
     let rebind_token = TR34CaRebindToken::from_der( pem::parse(B_10_TR34_SAMPLE_RBT_CA_UNBIND_PEM).unwrap().contents()).unwrap();
     
-    //assert! ( rbt_content_info.content_type == tr34::PKCS7_SIGNED_DATA_OID);
+    assert! ( rbt_content_info.content_type == ID_SIGNED_DATA);
 
     let rbt_signed_outer : cms::signed_data::SignedData = rbt_content_info.content.decode_as().unwrap();
     
-    assert! ( rbt_signed_outer.digest_algorithms.clone().into_vec() == vec![AlgorithmIdentifierOwned { oid: ID_SHA_256, parameters: None}]);
+    assert! ( rbt_signed_outer.digest_algorithms.clone().into_vec() == vec![rsa::pkcs8::spki::AlgorithmIdentifierOwned { oid: ID_SHA_256, parameters: None}]);
     assert! ( rbt_signed_outer.certificates.is_none());
     assert! ( rbt_signed_outer.crls.is_none());
 
@@ -1894,27 +1724,13 @@ fn decode_b_10_ca_rebind_token() {
     let signed_attr_3 = outer_signed_attrs.get(2).unwrap();
     assert! ( signed_attr_3.oid == ID_MESSAGE_DIGEST);
     assert! ( signed_attr_3.values.len() == 1);
-    // Digest value already checked in verify_signature above
-  
-    assert! ( verify_signature_openssl(&rbt_signed_outer, &get_ca_krd_openssl()) );
-
-    // Second go at signature verify
     
+    let verify_with_ca_krd = TR34VerifyOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_3_ca_krd_id()));
+        return get_ca_krd_openssl();
+    });
+    assert! ( rebind_token.verify_signature(verify_with_ca_krd) == true);
     
-    assert! ( rebind_token.verify_signature(|message: &[u8], signer_info: &SignerInfo| 
-        { 
-            assert! ( signer_info.digest_alg.oid == ID_SHA_256);
-            assert! ( signer_info.digest_alg.parameters.is_none());
-            assert! ( signer_info.sid == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_3_ca_krd_id()));
-            assert! ( signer_info.signature_algorithm.oid == der::oid::db::rfc5912::RSA_ENCRYPTION); // ID_SHA_256_WITH_RSA_ENCRYPTION);
-            assert! ( signer_info.signature_algorithm.parameters.as_ref().unwrap() == &Any::new(der::Tag::Null, [0u8;0]).unwrap());
-            assert! ( signer_info.unsigned_attrs.is_none());
-        
-            let ca_krd = get_ca_krd_openssl();
-            let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &ca_krd).unwrap();
-            verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-            return verifier.verify_oneshot(signer_info.signature.as_bytes(), message).unwrap();
-        }));
 
     assert! ( rbt_signed_outer.encap_content_info.econtent_type == ID_SIGNED_DATA);
     let econtent_as_sequence = Any::new(der::Tag::Sequence, rbt_signed_outer.encap_content_info.econtent.unwrap().value()).unwrap();
@@ -1929,10 +1745,10 @@ fn decode_b_10_ca_rebind_token() {
     assert! ( signed_inner.encap_content_info.econtent_type == ID_DATA);
 
     // Different to TR-34, which says there is a single sequence with on issuer... have to a dodgty to parse the two blocks
+    println! ( "Faulty Sample: Missing a sequence tag in the esigned content");
     let as_seq = Any::new ( der::Tag::Sequence, signed_inner.encap_content_info.econtent.unwrap().value()).unwrap();
     let unbind_id = as_seq.decode_as::<tr34::UbtCaUnbind>().unwrap();
 
-    //let unbind_id = cms::cert::IssuerAndSerialNumber::from_der( signed_inner.encap_content_info.econtent.unwrap().value()).unwrap();
     assert! ( unbind_id.id_krd == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
 
     let unbind_id2 = rebind_token.get_rebind_ids().unwrap();
@@ -1941,18 +1757,19 @@ fn decode_b_10_ca_rebind_token() {
 
     assert! ( rebind_token.get_new_kdh_cred() == get_kdh_2_cert());
 
+    let signer_with_ca_krd = TR34SignOpenssl::new (
+        get_priv_key_openssl(B_2_1_4_TR34_SAMPLE_CA_KRD_KEY_P12),
+        cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_3_CA_KRD_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
 
-    let built_ca_rebind_token = TR34CaRebindToken::build(
+    let built_ca_rebind_token2 = TR34CaRebindToken::build (
         &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
         &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_4_KDH_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
-        &get_b_2_2_1_3_ca_krd_id(),
         get_kdh_2_cert(),
         &UtcTime::from_unix_duration(std::time::Duration::from_secs(1328016134)).unwrap(),
-        sign_with_ca_krd
+        signer_with_ca_krd
     ).unwrap();
 
-    assert! ( built_ca_rebind_token == rebind_token);
-    assert! ( built_ca_rebind_token.to_der().unwrap() == pem::parse(B_10_TR34_SAMPLE_RBT_CA_UNBIND_PEM).unwrap().contents());
+    assert! ( built_ca_rebind_token2 == rebind_token);
 
  }
     
@@ -1961,30 +1778,20 @@ fn decode_b_10_ca_rebind_token() {
 
 #[test]
 fn decode_b_11_kdh_rebind() {
-    let content_info = ContentInfo::from_der(pem::parse(B_11_SAMPLE_RBT_KDH_PEM).unwrap().contents()).unwrap();
+    let content_info = cms::content_info::ContentInfo::from_der(pem::parse(B_11_SAMPLE_RBT_KDH_PEM).unwrap().contents()).unwrap();
     let rebind_token = TR34KdhRebindToken::from_der(pem::parse(B_11_SAMPLE_RBT_KDH_PEM).unwrap().contents()).unwrap();
  
     assert! ( content_info.content_type == ID_SIGNED_DATA);
 
     let signed_outer : cms::signed_data::SignedData = content_info.content.decode_as().unwrap();
 
-    assert! ( verify_signature_openssl (&signed_outer, &get_kdh_1_pub_key() ));
-      // Second go at signature verify
-    assert! ( rebind_token.verify_signature(|message: &[u8], signer_info: &cms::signed_data::SignerInfo| 
-        { 
-            assert! ( signer_info.digest_alg.oid == ID_SHA_256);
-            assert! ( signer_info.digest_alg.parameters.is_none());
-            assert! ( signer_info.digest_alg == AlgorithmIdentifierOwned{oid: ID_SHA_256, parameters: None });
-            assert! ( signer_info.sid == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
-
-            let ca_krd = get_kdh_1_pub_key();
-            let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &ca_krd).unwrap();
-            verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-            return verifier.verify_oneshot(signer_info.signature.as_bytes(), message).unwrap();
-        }));
- 
-
-    assert! ( signed_outer.digest_algorithms.into_vec() == vec![AlgorithmIdentifierOwned { oid: ID_SHA_256, parameters: None}]);
+    let verify_with_kdh_1_openssl = TR34VerifyOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
+        return get_kdh_1_pub_key();
+    });
+    assert! ( rebind_token.verify_signature(verify_with_kdh_1_openssl) == true);
+    
+    assert! ( signed_outer.digest_algorithms.into_vec() == vec![rsa::pkcs8::spki::AlgorithmIdentifierOwned { oid: ID_SHA_256, parameters: None}]);
     assert! ( signed_outer.certificates.is_none());
     assert! ( signed_outer.crls.as_ref().is_some());
     assert! ( signed_outer.crls.unwrap().0.into_vec() == vec![cms::revocation::RevocationInfoChoice::Crl(get_ca_kdh_crl())]);
@@ -2008,15 +1815,13 @@ fn decode_b_11_kdh_rebind() {
     assert! ( signed_attr_2.values.len() == 1);
     assert! ( signed_attr_2.values.get(0).unwrap().decode_as::<OctetString>().unwrap() == OctetString::new([125,234,28,0,137,78,36,106]).unwrap() );
 
-    
     let signed_attr_3 = outer_signed_attrs.get(2).unwrap();
     assert! ( signed_attr_3.oid == ID_MESSAGE_DIGEST);
     assert! ( signed_attr_3.values.len() == 1);
-    //assert! ( signed_attr_3.values.get(0).unwrap().decode_as::<ObjectIdentifier>().unwrap() == PKCS7_SIGNED_DATA_OID ); -- check as part of signature check
-
+    
     assert! ( signed_outer.encap_content_info.econtent_type == ID_SIGNED_DATA);
     
-    // THere seems to be a missing SEQUENCE in the stream, decode with a dummy header
+    // There seems to be a missing SEQUENCE in the stream, decode with a dummy header
     let inner_as_sequence = Any::new( der::Tag::Sequence, signed_outer.encap_content_info.econtent.unwrap().value()).unwrap();
     let inner = inner_as_sequence.decode_as::<cms::signed_data::SignedData>().unwrap();
      
@@ -2032,41 +1837,42 @@ fn decode_b_11_kdh_rebind() {
     let unbind_id = cms::cert::IssuerAndSerialNumber::from_der( inner.encap_content_info.econtent.unwrap().value()).unwrap();
     assert! ( unbind_id == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
     
-    assert! ( rebind_token.get_rebind_id() == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+    assert! ( rebind_token.get_rebind_id().unwrap() == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
     assert! ( rebind_token.get_new_kdh_cred() == get_kdh_2_cert());
-    assert! ( rebind_token.get_random_number() == hex!("7D EA 1C 00 89 4E 24 6A"));
+    assert! ( rebind_token.get_random_number().unwrap() == hex!("7D EA 1C 00 89 4E 24 6A"));
 
-
+    let signer_with_kdh_1 = TR34SignOpenssl::new (
+        get_priv_key_openssl(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12),
+        cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_4_KDH_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+  
     let built_kdh_rebind_token = TR34KdhRebindToken::build(
         &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
-        &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_4_KDH_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
         get_kdh_2_cert(),
         &get_ca_kdh_crl(),
         &hex!("7D EA 1C 00 89 4E 24 6A"),
-        sign_with_kdh_1
+        signer_with_kdh_1
     ).unwrap();
 
     assert! ( built_kdh_rebind_token == rebind_token );
+
 }
 
 #[test]
 fn decode_b_12 () {
-    let rngtoken = Attribute::from_der(pem::parse(B_12_KRD_RANDOM_NUMBER_TOKEN).unwrap().contents()).unwrap();
+    let rngtoken = cms::cert::x509::attr::Attribute::from_der(pem::parse(B_12_KRD_RANDOM_NUMBER_TOKEN).unwrap().contents()).unwrap();
     let rngtoken2 = TR34RandomNumberToken::from_der(pem::parse(B_12_KRD_RANDOM_NUMBER_TOKEN).unwrap().contents()).unwrap();
     assert! ( rngtoken.oid == tr34::ID_RANDOM_NONCE);
     assert! ( rngtoken.values.into_vec() == vec![Any::new(der::Tag::OctetString, hex!("167EB0E72781E4940112233445566778")).unwrap()]);
-    assert! ( rngtoken2.get_random_number() == hex!("167EB0E72781E4940112233445566778"));
+    assert! ( rngtoken2.get_random_number().unwrap() == hex!("167EB0E72781E4940112233445566778"));
 
     let built_token = TR34RandomNumberToken::build ( &hex!("167EB0E72781E4940112233445566778") ).unwrap();
-
     assert! ( built_token == rngtoken2);
-
 }
 
 
 #[test]
 fn decode_b_13_ca_unbind () {
-    let cms_content = ContentInfo::from_der(pem::parse(B_13_UBT_CA_UNBIND).unwrap().contents()).unwrap();
+    let cms_content = cms::content_info::ContentInfo::from_der(pem::parse(B_13_UBT_CA_UNBIND).unwrap().contents()).unwrap();
     let parsed_unbind_token = TR34CaUnbindToken::from_der(pem::parse(B_13_UBT_CA_UNBIND).unwrap().contents()).unwrap();
     
     assert! (cms_content.content_type == ID_SIGNED_DATA);
@@ -2086,33 +1892,15 @@ fn decode_b_13_ca_unbind () {
     assert! ( signer_info.unsigned_attrs.is_none());
     assert! ( signer_info.sid == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_3_ca_krd_id()));
 
-    println! ( "signerattrs={:?}", signer_info.signed_attrs.to_der());
-    println! ( "unsignerattrs={:?}", signer_info.unsigned_attrs.to_der());
-
-    assert! ( verify_signature_openssl (&signed_data, &&get_ca_krd_openssl() ));
+    let verify_with_ca_krd = TR34VerifyOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_3_ca_krd_id()));
+        return get_ca_krd_openssl();
+    });
+    assert! ( parsed_unbind_token.verify_signature(verify_with_ca_krd) == true);
     
-    assert! ( parsed_unbind_token.verify_signature(|message: &[u8], signer_info: &SignerInfo| 
-        { 
-            assert! ( signer_info.version == cms::content_info::CmsVersion::V1 );
-            assert! ( signer_info.signed_attrs.is_none());
-            assert! ( signer_info.digest_alg == AlgorithmIdentifierOwned { oid:ID_SHA_256, parameters:None });
-            assert! ( signer_info.signature_algorithm.oid == der::oid::db::rfc5912::RSA_ENCRYPTION /*ID_SHA_256_WITH_RSA_ENCRYPTION*/);
-            assert! ( signer_info.unsigned_attrs.is_none());
-            assert! ( signer_info.sid == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_3_ca_krd_id()));
-        
-            let ca_krd = get_ca_krd_openssl();
-            let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &ca_krd).unwrap();
-            verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-            return verifier.verify_oneshot(signer_info.signature.as_bytes(), message).unwrap();
-        }));
-
-
     assert! ( signed_data.encap_content_info.econtent_type == der::oid::db::rfc5911::ID_DATA );
     let econtents_as_octet_string = signed_data.encap_content_info.econtent.as_ref().unwrap().decode_as::<OctetString>().unwrap();
-
-    println! ( "{:?}", signed_data.encap_content_info.econtent);
-    
-       
+   
     // There seems to be a missing SEQUENCE in the stream, decode with a dummy header
     let econtent_as_sequence = Any::new( der::Tag::Sequence, econtents_as_octet_string.as_bytes()).unwrap();
     let content = econtent_as_sequence.decode_as::<tr34::UbtCaUnbind>().unwrap();
@@ -2126,22 +1914,18 @@ fn decode_b_13_ca_unbind () {
     assert! ( unbind_id2.id_krd == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
     assert! ( unbind_id2.id_kdh == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_4_KDH_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
 
-    let built_ca_rebind_token = TR34CaUnbindToken::build(
+    let signer_with_ca_krd = TR34SignOpenssl::new (
+        get_priv_key_openssl(B_2_1_4_TR34_SAMPLE_CA_KRD_KEY_P12),
+        cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_3_CA_KRD_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+    
+    let built_ca_rebind_token2 = TR34CaUnbindToken::build(
         &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
         &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_4_KDH_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
-        &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_3_CA_KRD_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
-        sign_with_ca_krd
+        signer_with_ca_krd
     ).unwrap();
-    
-    assert! ( built_ca_rebind_token.get_outer_signed_data().encap_content_info == parsed_unbind_token.get_outer_signed_data().encap_content_info );
-    assert! ( built_ca_rebind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().digest_alg == parsed_unbind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().digest_alg );
-    assert! ( built_ca_rebind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().sid == parsed_unbind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().sid );
-    assert! ( built_ca_rebind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().signature_algorithm == parsed_unbind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().signature_algorithm );
-    assert! ( built_ca_rebind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().signed_attrs == parsed_unbind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().signed_attrs );
-    assert! ( built_ca_rebind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().signature == parsed_unbind_token.get_outer_signed_data().signer_infos.0.get(0).unwrap().signature );
-    assert! ( built_ca_rebind_token.get_outer_signed_data().signer_infos == parsed_unbind_token.get_outer_signed_data().signer_infos );
-    
-    assert! ( built_ca_rebind_token == parsed_unbind_token );
+
+    assert! ( built_ca_rebind_token2 == parsed_unbind_token );
+
 
 }
 
@@ -2180,47 +1964,44 @@ fn decode_b_14_kdh_unbind () {
     assert! ( signed_attr_2.oid == tr34::ID_RANDOM_NONCE);
     assert! ( signed_attr_2.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, hex!("7DEA1C00894E246A")).unwrap());
 
-    assert! ( unbind_token.get_random_number() == hex!("7DEA1C00894E246A"));
+    assert! ( unbind_token.get_random_number().unwrap() == hex!("7DEA1C00894E246A"));
     
     let signed_attr_3 = signed_attrs.get(2).unwrap();
     assert! ( signed_attr_3.oid == ID_MESSAGE_DIGEST);
     assert! ( signed_attr_3.values.get(0).unwrap() == &Any::new(der::Tag::OctetString, hex!("8798168E6F7F3118EDE8522B6336DFB56CFDF95DB7063CB7230EF00B4D666D1A")).unwrap());
     
-    assert! ( verify_signature_openssl(&signed_data, &get_kdh_1_pub_key()));
-    assert! ( unbind_token.verify_signature(|message: &[u8], signer_info: &SignerInfo| 
-        { 
-            assert! ( signer_info.version == cms::content_info::CmsVersion::V1 );
-            assert! ( signer_info.signed_attrs.is_some());
-            assert! ( signer_info.digest_alg.oid == ID_SHA_256 );
-            assert! ( signer_info.signature_algorithm.oid == der::oid::db::rfc5912::RSA_ENCRYPTION /*ID_SHA_256_WITH_RSA_ENCRYPTION*/);
-            assert! ( signer_info.unsigned_attrs.is_none());
-            assert! ( signer_info.sid == cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()) );
-                    let ca_krd = get_kdh_1_pub_key();
-            let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &ca_krd).unwrap();
-            verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-            return verifier.verify_oneshot(signer_info.signature.as_bytes(), message).unwrap();
-        }));
+    let verify_with_kdh_1 = TR34VerifyOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
+        return get_kdh_1_pub_key();
+    });
+    assert! ( unbind_token.verify_signature(verify_with_kdh_1) == true);
+    
 
     assert! ( signed_data.encap_content_info.econtent_type == der::oid::db::rfc5911::ID_DATA );
     
     // Content contains a single KRDidentifier
-    let econtents = signed_data.encap_content_info.econtent.unwrap();
-    let krd_id = cms::cert::IssuerAndSerialNumber::from_der(econtents.value());
+    let econtents = signed_data.encap_content_info.econtent.unwrap().decode_as::<OctetString>().unwrap();
+    let krd_id = cms::cert::IssuerAndSerialNumber::from_der(econtents.as_bytes());
+    //let krd_id = econtents.decode_as::<cms::cert::IssuerAndSerialNumber>();
     
     assert! (krd_id.unwrap() == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
 
     let krd_id2 = unbind_token.get_krd_id();
-    assert! (krd_id2 == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+    assert! (krd_id2.unwrap() == cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
 
-    let built_kdh_unbind_token = tr34::TR34KdhUnbindToken::build(
+    let signer_with_kdh_1 = TR34SignOpenssl::new (
+        get_priv_key_openssl(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12),
+        cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_4_KDH_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
+    
+    let built_kdh_unbind_token2 = tr34::TR34KdhUnbindToken::build(
         &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
-        &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_4_KDH_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap(),
         &get_ca_kdh_crl(),
         &hex!("7DEA1C00894E246A"),
-        sign_with_kdh_1
+        signer_with_kdh_1
     ).unwrap();
+
+    assert! ( built_kdh_unbind_token2 == unbind_token );
     
-    assert! ( built_kdh_unbind_token == unbind_token );
 }
 
 
@@ -2229,9 +2010,6 @@ fn decode_b_14_kdh_unbind () {
 
 fn decode_ca_kdh_issuer_and_serial_number (issuer_and_serial_number: &cms::cert::IssuerAndSerialNumber, issuer_name:&str, expected_serial_number: u64) {
      
-    println! ( "signer_issuer = {:?}\n", issuer_and_serial_number.issuer.0 );
-    println! ( "signer_serial_number = {:?}\n", issuer_and_serial_number.serial_number );
-
     assert! ( issuer_and_serial_number.issuer.0.len() == 3);
     let signer_issuer_1 = issuer_and_serial_number.issuer.0.get(0).unwrap();
     let signer_issuer_2 = issuer_and_serial_number.issuer.0.get(1).unwrap();
@@ -2239,30 +2017,28 @@ fn decode_ca_kdh_issuer_and_serial_number (issuer_and_serial_number: &cms::cert:
 
     let signer_issuer_1_attribute_1 = signer_issuer_1.0.get(0).unwrap();
     assert! ( signer_issuer_1_attribute_1.oid == COUNTRY_NAME );
-    assert! ( signer_issuer_1_attribute_1.value.decode_as::<asn1::PrintableString>().unwrap().to_string() == "US" );
+    assert! ( signer_issuer_1_attribute_1.value.decode_as::<der::asn1::PrintableString>().unwrap().to_string() == "US" );
 
     let signer_issuer_2_attribute_1 = signer_issuer_2.0.get(0).unwrap();
     assert! ( signer_issuer_2_attribute_1.oid == der::oid::db::rfc4519::ORGANIZATION_NAME);
-    assert! ( signer_issuer_2_attribute_1.value.decode_as::<asn1::PrintableString>() == asn1::PrintableString::new("TR34 Samples") );
+    assert! ( signer_issuer_2_attribute_1.value.decode_as::<der::asn1::PrintableString>() == der::asn1::PrintableString::new("TR34 Samples") );
 
     let signer_issuer_3_attribute_1 = signer_issuer_3.0.get(0).unwrap();
     assert! ( signer_issuer_3_attribute_1.oid == der::oid::db::rfc4519::COMMON_NAME);
-    println! ( "{:?}", signer_issuer_3_attribute_1.value.decode_as::<asn1::PrintableString>());
-    assert! ( signer_issuer_3_attribute_1.value.decode_as::<asn1::PrintableString>() == asn1::PrintableString::new(issuer_name));
+    assert! ( signer_issuer_3_attribute_1.value.decode_as::<der::asn1::PrintableString>() == der::asn1::PrintableString::new(issuer_name));
 
     assert! ( issuer_and_serial_number.serial_number.as_bytes().len() == 5);
     let mut serial_number_as_8_byte_array = [0u8; 8];
     serial_number_as_8_byte_array[3..].clone_from_slice(issuer_and_serial_number.serial_number.as_bytes());
     let serial_number_as_u64 = u64::from_be_bytes(serial_number_as_8_byte_array);
 
-    println! ( "serial_number = {:?}\n", serial_number_as_u64 );
     assert! ( expected_serial_number == serial_number_as_u64);
    
 }
 
 
 
-fn get_ca_kdh_crl() -> CertificateList {
+fn get_ca_kdh_crl() -> cms::cert::x509::crl::CertificateList {
     return decode_from_pem(B_2_1_3_TR34_SAMPLE_KDH_CRL).decode_as().unwrap();
 }
 
@@ -2284,15 +2060,12 @@ fn get_b_2_2_1_6_krd_1_id() -> cms::cert::IssuerAndSerialNumber {
     return decode_from_pem(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).decode_as().unwrap();
 }
 
-fn get_b_2_2_2_1_tdea_content_file() -> keyblock::tr34::TR34Block {
-    return decode_from_pem(B_2_2_2_1_TR34_SAMPLE_TDEA_ENCRYPTED_CONTENT_FILE).decode_as().unwrap();
-}
-fn get_b_2_2_4_signed_attr_1_pass() -> SignedAttributes {
+// fn get_b_2_2_2_1_tdea_content_file() -> keyblock::tr34::TR34Block {
+//     return decode_from_pem(B_2_2_2_1_TR34_SAMPLE_TDEA_ENCRYPTED_CONTENT_FILE).decode_as().unwrap();
+// }
+fn get_b_2_2_4_signed_attr_1_pass() -> cms::signed_data::SignedAttributes {
     let context_specific = decode_from_pem(B_2_2_4_SAMPLE_SIGNED_ATTRIBUTES_1_PASS_DER);
-    return Any::new( der::Tag::Set, context_specific.value()).unwrap().decode_as::<SignedAttributes>().unwrap();
-}
-fn get_b_2_2_5_auth_attr_2_pass() -> SignedAttributes {
-    return decode_from_pem(B_2_2_5_SAMPLE_AUTHENTICATED_ATTRIBUTES_2_PASS_PEM).decode_as().unwrap();    
+    return Any::new( der::Tag::Set, context_specific.value()).unwrap().decode_as::<cms::signed_data::SignedAttributes>().unwrap();
 }
 
 
@@ -2305,21 +2078,8 @@ fn decode_from_pem ( pem_contents: &str ) -> Any{
 
 
 
-//const ID_SHA_256: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
-//const ID_SHA_256_WITH_RSA_ENCRYPTION: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1"); // TR-34 say .11
 const ID_SHA_256_WITH_RSA_ENCRYPTION2: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
-//const ID_DATA: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1"); 
-//const ID_CONTENT_TYPE: der::asn1::ObjectIdentifier= ObjectIdentifier::new_unwrap("1.2.840.113549.1.9.3");
-
 const ID_PKCS8_SHROUDED_KEY_BAG: der::asn1::ObjectIdentifier= ObjectIdentifier::new_unwrap("1.2.840.113549.1.12.10.1.2");
-
-
-//const PKCS7_DATA_OID: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
-//const ID_DES_EDE_3_CBC: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.3.7");
-
-//const ID_COUNTRY_NAME: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.6");
-//const ID_ORGANIZATION_NAME: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.10");
-//const ID_COMMON_NAME: der::asn1::ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.3");
 
 
 #[test]
@@ -2329,188 +2089,49 @@ fn test_encode_random () {
     let createdtoken = TR34RandomNumberToken::build(&random_number).unwrap();
     let token_as_der = createdtoken.to_der().unwrap();
     let parsedtoken = TR34RandomNumberToken::from_der ( &token_as_der ).unwrap();
-    assert! ( parsedtoken.get_random_number() == random_number);
+    assert! ( parsedtoken.get_random_number().unwrap() == random_number);
 }
 
-
-// fn sign_with_krd_1 (message: &[u8] ) -> Vec<u8> { 
-//     let kdh_1 = get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
-//     let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &kdh_1).unwrap();
-//     signer.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-//     return signer.sign_oneshot_to_vec(message).unwrap();
-// }
-fn sign_with_kdh_1 (message: &[u8] ) -> Vec<u8> { 
-    let kdh_1 = get_priv_key_openssl(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12);
-    let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &kdh_1).unwrap();
-    signer.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-    return signer.sign_oneshot_to_vec(message).unwrap();
-}
-// fn sign_with_ca_kdh (message: &[u8] ) -> Vec<u8> { 
-//     let kdh_1 = get_priv_key_openssl(B_2_1_2_TR34_SAMPLE_CA_KDH_KEY_P12);
-//     let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &kdh_1).unwrap();
-//     signer.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-//     return signer.sign_oneshot_to_vec(message).unwrap();
-// }
-fn sign_with_ca_krd (message: &[u8] ) -> Vec<u8> { 
-    let kdh_1 = get_priv_key_openssl(B_2_1_4_TR34_SAMPLE_CA_KRD_KEY_P12);
-    let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &kdh_1).unwrap();
-    signer.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-    return signer.sign_oneshot_to_vec(message).unwrap();
-}
 
 
 #[test]
 fn test_encode_1_pass_key_token () {
     let random_number = vec! [ 0, 1, 2, 3, 4, 5, 6, 7 ];
     let key_to_transport = [3u8; 24];
-    // let mut created_token_factory = tr34::TR34KeyTokenFactory::new ();
+    
+    let encrypt_with_krd = keyblock::tr34openssl::TR34EncryptOpenssl::new (
+        get_pub_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12),
+        get_b_2_2_1_6_krd_1_id());
+    let sign_with_kdh = TR34SignOpenssl::new(
+         get_priv_key_openssl(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12),
+         get_b_2_2_1_4_kdh_1_id());
 
-    // created_token_factory.set_random_number ( &random_number);
-    // created_token_factory.set_key_block_header ( "ABCDEF".as_bytes());
-    // created_token_factory.set_signer_issuer_and_serial ( get_b_2_2_1_4_kdh_1_id() );
-    // created_token_factory.set_recipient_issuer_and_serial( get_b_2_2_1_6_krd_1_id());
-    // created_token_factory.set_key_value(&key_to_transport);
     let token = TR34KeyToken::build ( 
-        &get_b_2_2_1_4_kdh_1_id(), &get_b_2_2_1_6_krd_1_id(), 
+        &get_b_2_2_1_4_kdh_1_id(), /*&get_b_2_2_1_6_krd_1_id(),*/ 
         "ABCDEF".as_bytes(), &key_to_transport, Some(&random_number),
-        |plaintext: &[u8]|
-        {
-            let iv = [0u8;8];
-            let key = hex!("0123456789ABCDEFFEDCBA9876543210FFEEDDCCBBAA9988");
-            let res_openssl = openssl::symm::encrypt ( openssl::symm::Cipher::des_ede3_cbc(), &key,  Some(&iv), plaintext);
-            let kek = get_pub_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12); //get_krd_1_pub_openssl();
-            let mut encryptor = openssl::encrypt::Encrypter::new(&kek).unwrap();
-            encryptor.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP).unwrap();
-            encryptor.set_rsa_mgf1_md(openssl::hash::MessageDigest::sha256()).unwrap();
-            encryptor.set_rsa_oaep_md(openssl::hash::MessageDigest::sha256()).unwrap();
-            
-            let mut encrypted_key = vec![0u8;256];
-            let res2 = encryptor.encrypt (&key, &mut encrypted_key ).unwrap();
-            encrypted_key.resize(res2, 0);
-            
-            return (res_openssl.unwrap(), encrypted_key, iv.to_vec());
-        },
-        |message: &[u8]|  { 
-            let kdh_1 = get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12); //get_krd_1_openssl();
-            let mut signer = openssl::sign::Signer::new(openssl::hash::MessageDigest::sha256(), &kdh_1).unwrap();
-            signer.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-            return signer.sign_oneshot_to_vec(message).unwrap();
-        }).unwrap();
+        encrypt_with_krd, sign_with_kdh).unwrap();
 
-    assert! ( token.get_random_number() == random_number);
-    assert! ( token.get_key_block_header() == "ABCDEF".as_bytes());
-    let verify_result = token.verify_signature(|message: &[u8], signer_info: &SignerInfo| 
-        {
-            let kdh_1 = get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12); //get_krd_1_openssl();
-            let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &kdh_1).unwrap();
-            verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-            return verifier.verify_oneshot(signer_info.signature.as_bytes(), message).unwrap();
-        });
-    assert! ( verify_result == true);
-    let recovered_key = token.get_plaintext_key(|ciphertext:&[u8], enveloped_key:&[u8], iv:&[u8]|
-        {
-            let kek = get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12); //get_krd_1_openssl();
-            let mut decryptor = openssl::encrypt::Decrypter::new(&kek).unwrap();
-            decryptor.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP).unwrap();
-            decryptor.set_rsa_mgf1_md(openssl::hash::MessageDigest::sha256()).unwrap();
-            decryptor.set_rsa_oaep_md(openssl::hash::MessageDigest::sha256()).unwrap();
+    assert! ( token.get_random_number().unwrap() == random_number);
+    assert! ( token.get_key_block_header().unwrap() == "ABCDEF".as_bytes());
 
-            let mut ephemeral_key = vec![0u8;256];
-            let res2 = decryptor.decrypt (&enveloped_key, &mut ephemeral_key ).unwrap();
-            ephemeral_key.resize(res2, 0);
+    let verify_with_kdh_1 = TR34VerifyOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &cms::signed_data::SignerIdentifier::IssuerAndSerialNumber(get_b_2_2_1_4_kdh_1_id()));
+        return get_kdh_1_pub_key();
+    });
+    assert! ( token.verify_signature(verify_with_kdh_1) == true);
+        
+    let decrypt_with_krd = TR34DecryptOpenssl::new(|issuer_id| {
+        assert! ( issuer_id == &get_b_2_2_1_6_krd_1_id());
+        return get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
+    });
+    let recovered_key2 = token.get_plaintext_key2(decrypt_with_krd);
+    assert! ( recovered_key2.unwrap() == key_to_transport );
 
-            let res_openssl = openssl::symm::decrypt ( openssl::symm::Cipher::des_ede3_cbc(), &ephemeral_key,  Some(&iv), ciphertext).unwrap();
-
-            return Some(res_openssl);
-        }
-    );
-    assert! ( recovered_key.unwrap() == key_to_transport );
    
 
 }
 
 
 
-pub fn decrypt_enveloped_data ( envelope: &cms::enveloped_data::EnvelopedData, key: &openssl::pkey::PKey<openssl::pkey::Private>) -> bool {
-    //
-    //let envelope = self.get_enveloped_data();
 
-    let recip_info = envelope.recip_infos.0.get(0).unwrap();
-    let recip_ktri = match recip_info {
-        cms::enveloped_data::RecipientInfo::Ktri ( v ) => v,
-        _ => panic!("unhandled enum type"),
-    };
-        
-    let key_rsa = key.rsa().unwrap();
-
-    let p = key_rsa.p().unwrap();
-    let q = key_rsa.q().unwrap();
-    let d = key_rsa.d();
-    let n = key_rsa.n();
-    let e = key_rsa.e();
-    let mut buff = [0u8; 256];
-
-    let mut decryptor = openssl::encrypt::Decrypter::new(key).unwrap();
-    decryptor.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP).unwrap();
-    decryptor.set_rsa_mgf1_md(openssl::hash::MessageDigest::sha256()).unwrap();
-    decryptor.set_rsa_oaep_md(openssl::hash::MessageDigest::sha256()).unwrap();
-    //decryptor.set_rsa_oaep_label(enc_alg_params.p_source_algorithm.parameters.unwrap().value());
-    //decryptor.set_rsa_oaep_label(&[0u8;0]).unwrap();
-    let inbuff = recip_ktri.enc_key.as_bytes();
-
-    let key2 = rsa::RsaPrivateKey::from_components(rsa::BigUint::from_bytes_be(&n.to_vec()), rsa::BigUint::from_bytes_be(&e.to_vec()), rsa::BigUint::from_bytes_be(&d.to_vec()), vec![rsa::BigUint::from_bytes_be(&p.to_vec()),rsa::BigUint::from_bytes_be(&q.to_vec())]).unwrap();
-    let padding = rsa::Oaep::new_with_mgf_hash::<sha2::Sha512, sha2::Sha512>();
-    //let padding = Pkcs1v15Encrypt::default();
-    let res3 = key2.decrypt ( padding, inbuff );
-
-    
-    let res2 = decryptor.decrypt (inbuff, &mut buff );
-    let res = key_rsa.private_decrypt(inbuff, &mut buff, openssl::rsa::Padding::NONE);
-
-
-    println! ( "\nres={res:?}\nres2={res2:?}\nres3={res3:?}\nsize={:?} res={},{}...\n", key_rsa.size(), buff[0], buff[1]);
-
-    let mb_encrypted_content_info = &envelope.encrypted_content;
-    
-    assert! ( mb_encrypted_content_info.content_type == ID_DATA);
-    //assert! ( mb_encrypted_content_info.content_enc_alg.oid == ID_DES_EDE_3_CBC);
-    //assert! ( mb_encrypted_content_info.content_enc_alg.parameters.as_ref().unwrap().value() == hex!("0123456789ABCDEF"));
-    
-    let encrypted_data = mb_encrypted_content_info.encrypted_content.as_ref().unwrap();
-    println! ( "mb_encrypted_data = ({}){encrypted_data:?}", encrypted_data.len());
-    return true;
-
-}
-
-
-
-pub fn verify_signature_openssl (signed_data: &cms::signed_data::SignedData, signer_public_key: &openssl::pkey::PKey<openssl::pkey::Public>) -> bool{
-
-    assert! ( signed_data.digest_algorithms.get(0).unwrap().oid ==der::oid::db::rfc5912::ID_SHA_256);
-    
-    let mb_econtent = signed_data.encap_content_info.econtent.as_ref().unwrap();
-
-    let signer_info = signed_data.signer_infos.0.get(0).unwrap();
-    let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), &signer_public_key).unwrap();
-    verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).unwrap();
-        
-
-    if let Some(signed_attrs) = signer_info.signed_attrs.as_ref() {
-        for signed_attr in signed_attrs.iter() {
-            if signed_attr.oid == der::oid::db::rfc5911::ID_MESSAGE_DIGEST {
-                assert! ( signed_attr.values.len() == 1);
-                let mut calc_dig = openssl::sha::Sha256::new();
-                calc_dig.update(mb_econtent.value());
-                let calc_dig_out = calc_dig.finish();
-                assert! ( signed_attr.values.get(0).unwrap().decode_as::<der::asn1::OctetString>().unwrap() == der::asn1::OctetString::new(calc_dig_out).unwrap() );
-            }
-        }
-    
-        // Spec says if there are signed attributes then the hash value is calculated over this signed attributes
-        return verifier.verify_oneshot(signer_info.signature.as_bytes(), &signed_attrs.to_der().unwrap()).unwrap(); 
-    }
-    else {
-        return verifier.verify_oneshot(signer_info.signature.as_bytes(), &mb_econtent.value()).unwrap(); 
-    }
-}
 

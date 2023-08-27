@@ -1,7 +1,7 @@
 pub mod fromtr34;
 use der::oid::db::rfc5911::ID_SIGNED_DATA;
 use fromtr34::*;
-use openssl::{pkey::Id};
+//use openssl::{pkey::Id};
 
 
 // fn get_certs_openssl () -> openssl::stack::Stack<openssl::x509::X509> {
@@ -67,9 +67,6 @@ use openssl::{pkey::Id};
 
 #[test]
 fn decode_b_2_1_1_ca_openssl() {
-    let r = openssl::provider::Provider::load(None, "legacy");
-    println! ( "{:?}", openssl::version::version());
-    println! ( "{:?}", r.err());
     let ca_key_pem = pem::parse(B_2_1_1_SAMPLE_ROOT_KEY_P12).unwrap();
     let ca_key_openssl = openssl::pkcs12::Pkcs12::from_der ( ca_key_pem.contents()).unwrap().parse2("TR34").unwrap();
 
@@ -80,7 +77,7 @@ fn decode_b_2_1_1_ca_openssl() {
     assert! ( ca_cert.as_ref().issuer_name_hash() == 1388095582);
 
     let priv_key = ca_key_openssl.pkey.unwrap();
-    assert! ( priv_key.id() == Id::RSA);
+    assert! ( priv_key.id() == openssl::pkey::Id::RSA);
     assert! ( priv_key.rsa().unwrap().size() == 2048 / 8 );
 
     // No cert chain on the root key
@@ -218,6 +215,9 @@ fn decode_b_4_ca_kdh_openssl () {
     let _token_openssl_pkcs7 = openssl::pkcs7::Pkcs7::from_der(pem::parse(B_4_CA_KDH_P7B).unwrap().contents()).unwrap();
     let mut _token_openssl_cms = openssl::cms::CmsContentInfo::from_der(pem::parse(B_4_CA_KDH_P7B).unwrap().contents()).unwrap();
 
+    let mut certs = openssl::stack::Stack::new().unwrap();
+    certs.push (get_cert_openssl(B_2_1_5_TR34_SAMPLE_KDH_1_KEY_P12)).unwrap();
+   
     //let certs = openssl::stack::Stack::<X509>::new().unwrap();
     //let x = token_openssl_pkcs7.signers(&certs, openssl::pkcs7::Pkcs7Flags::NOINTERN).unwrap();
  
