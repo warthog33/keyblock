@@ -3,10 +3,10 @@ use hex_literal::hex;
 use crate::tr34::*;
 
 
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, der::Sequence)]
-pub struct Mgf1Params {
-    hash_algorithm: der::oid::ObjectIdentifier,
-}
+// #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, der::Sequence)]
+// pub struct Mgf1Params {
+//     hash_algorithm: der::oid::ObjectIdentifier,
+// }
 
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord, der::Sequence)]
@@ -29,6 +29,15 @@ pub const DH_SINGLE_PASS_STD_DH_SHA256KDF_SCHEME:der::asn1::ObjectIdentifier = d
 pub struct TR34DecryptOpenssl<FuncGetPrivKey> 
     where FuncGetPrivKey: Fn(&cms::cert::IssuerAndSerialNumber)->openssl::pkey::PKey<openssl::pkey::Private>{
     get_priv_key: FuncGetPrivKey,
+}
+
+fn correct_rsa_oaep_params(der: &der::Any) -> Result<rsa::pkcs1::RsaOaepParams, der::Error> {
+    let rsa2 = der.decode_as::<RsaOaepParams2>()?;
+    Ok( rsa::pkcs1::RsaOaepParams {
+        hash: rsa2.hash,
+        mask_gen: rsa2.mask_gen,
+        p_source: rsa2.p_source,
+    })
 }
 
 impl<F> TR34DecryptOpenssl::<F> where 
@@ -108,9 +117,16 @@ impl<F> TR34DecryptOpenssl::<F> where
             }
             else if recip_ktri.key_enc_alg.oid == der::oid::db::rfc5912::ID_RSAES_OAEP {
                 encryptor.set_rsa_padding(openssl::rsa::Padding::PKCS1_OAEP)?;
+                //encryptor.set_rsa_padding(openssl::rsa::Padding::NONE)?;
                  
+                let mut enc_alg_params_option =  recip_ktri.key_enc_alg.parameters.as_ref().unwrap().decode_as::<rsa::pkcs1::RsaOaepParams>();
+                // Try with modified OaepParams
+                if enc_alg_params_option.is_err() {
+                    enc_alg_params_option = correct_rsa_oaep_params(recip_ktri.key_enc_alg.parameters.as_ref().unwrap());
+                }
+
                 // Try using RsaOaepParams from the rsa crate, which seems to work with openssl generated cms 
-                if let Ok(enc_alg_params) = recip_ktri.key_enc_alg.parameters.as_ref().unwrap().decode_as::<rsa::pkcs1::RsaOaepParams>() {
+                if let Ok(enc_alg_params) = enc_alg_params_option {
                     assert! ( enc_alg_params.mask_gen.oid == der::oid::db::rfc5912::ID_MGF_1);
             
                     encryptor.set_rsa_oaep_md(match enc_alg_params.hash.oid {
@@ -137,21 +153,22 @@ impl<F> TR34DecryptOpenssl::<F> where
                         }
                     }
                 }
-                // Use the version of RsaOaepParams without any content specific tags, which I think is a mistake in TR-34
-                else if let Ok(enc_alg_params) = recip_ktri.key_enc_alg.parameters.as_ref().unwrap().decode_as::<RsaOaepParams2>() {
-                    assert! ( enc_alg_params.mask_gen.oid == der::oid::db::rfc5912::ID_MGF_1);
-                    assert! ( enc_alg_params.mask_gen.parameters.unwrap() == 
-                        rsa::pkcs8::AlgorithmIdentifierRef{ oid: der::oid::db::rfc5912::ID_SHA_256, parameters: None });
-                    assert! ( enc_alg_params.hash == rsa::pkcs8::AlgorithmIdentifierRef { oid: der::oid::db::rfc5912::ID_SHA_256, parameters: Some(der::AnyRef::new(der::Tag::Null, &[0u8;0]).unwrap())});
-                    assert! ( enc_alg_params.p_source == rsa::pkcs8::AlgorithmIdentifierRef { oid: der::oid::db::rfc5912::ID_P_SPECIFIED, parameters: Some(der::AnyRef::new(der::Tag::OctetString, &[0u8;0]).unwrap())});
-                    encryptor.set_rsa_mgf1_md(openssl::hash::MessageDigest::sha256())?;
-                    encryptor.set_rsa_oaep_md(openssl::hash::MessageDigest::sha256())?;
-                }
+                // // Use the version of RsaOaepParams without any content specific tags, which I think is a mistake in TR-34
+                // else if let Ok(enc_alg_params) = recip_ktri.key_enc_alg.parameters.as_ref().unwrap().decode_as::<RsaOaepParams2>() {
+                //     assert! ( enc_alg_params.mask_gen.oid == der::oid::db::rfc5912::ID_MGF_1);
+                //     assert! ( enc_alg_params.mask_gen.parameters.unwrap() == 
+                //         rsa::pkcs8::AlgorithmIdentifierRef{ oid: der::oid::db::rfc5912::ID_SHA_256, parameters: None });
+                //     assert! ( enc_alg_params.hash == rsa::pkcs8::AlgorithmIdentifierRef { oid: der::oid::db::rfc5912::ID_SHA_256, parameters: Some(der::AnyRef::new(der::Tag::Null, &[0u8;0]).unwrap())});
+                //     assert! ( enc_alg_params.p_source == rsa::pkcs8::AlgorithmIdentifierRef { oid: der::oid::db::rfc5912::ID_P_SPECIFIED, parameters: Some(der::AnyRef::new(der::Tag::OctetString, &[0u8;0]).unwrap())});
+                //     encryptor.set_rsa_mgf1_md(openssl::hash::MessageDigest::sha256())?;
+                //     encryptor.set_rsa_oaep_md(openssl::hash::MessageDigest::sha256())?;
+                // }
                     
             }
             let inbuff = recip_ktri.enc_key.as_bytes();
             let mut buff = vec![0u8; inbuff.len()];
             
+            println! ( "encrypted = ({}){:}", inbuff.len(), hex::encode(inbuff));
             let res2 = encryptor.decrypt (inbuff, &mut buff );
    
             if res2.is_ok() {
@@ -474,3 +491,4 @@ impl TR34Encrypt for TR34EncryptOpenssl
         }, cek.to_vec() ));
     }
 }
+    

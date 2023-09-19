@@ -18,7 +18,8 @@ fn test_x9_143_2021_ecc_keyblock_8_6 () {
         
 
     let cert1 =  "02\
-                        0002F0\
+                        00\
+                        02F0\
                         MIICLjCCAdSgAwIBAgIIGDrdWBxuNpAwCgYIKoZIzj0EAwIwMTEXMBUGA1UECgwOQWxwaGEgTWVyY2hhbnQxFjAUBgNVB\
                         AMMDVNhbXBsZSBFQ0MgQ0EwHhcNMjAwODE1MDIxMDEwWhcNMjEwODE1MDIxMDEwWjBPMRcwFQYDVQQKDA5BbHBoYSBNZX\
                         JjaGFudDEfMB0GA1UECwwWVExTIENsaWVudCBDZXJ0aWZpY2F0ZTETMBEGA1UEAwwKMTIzNDU2Nzg5MDBZMBMGByqGSM4\
@@ -28,7 +29,8 @@ fn test_x9_143_2021_ecc_keyblock_8_6 () {
                         kwN6A1oDOGMWh0dHA6Ly9jcmwuYWxwaGEtbWVyY2hhbnQuZXhhbXBsZS9TYW1wbGVFQ0NDQS5jcmwwCgYIKoZIzj0EAwI\
                         DSAAwRQIhAPuWWvCTmOdvQzUjCUmTX7H4sX4Ebpw+CI+aOQLu1DqwAiA0eR4FdMtvXV4P6+WMz5B10oea5xtLTfSgoBDo\
                         TkvKYQ==\
-                        0002C4\
+                        00\
+                        02C4\
                         MIICDjCCAbOgAwIBAgIIfnOsCbsxHjwwCgYIKoZIzj0EAwIwNjEXMBUGA1UECgwOQWxwaGEgTWVyY2hhbnQxGzAZBgNVB\
                         AMMElNhbXBsZSBSb290IEVDQyBDQTAeFw0yMDA4MTUwMjEwMDlaFw0zMDA4MTMwMjEwMDlaMDExFzAVBgNVBAoMDkFscG\
                         hhIE1lcmNoYW50MRYwFAYDVQQDDA1TYW1wbGUgRUNDIENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEHCanM9n+Rji\
@@ -80,7 +82,14 @@ fn test_x9_143_2021_ecc_keyblock_8_6 () {
 
     let unwrapped_block = key_block_factory.unwrap(&wrapped_key8).unwrap();
 
-    assert_eq!(unwrapped_block.get_usage(), KeyUsage("S0"));
+    assert! ( unwrapped_block.get_usage() == KeyUsage("S0"));
+    assert! ( unwrapped_block.get_certificate().unwrap() == CertificateOption::Chain ( vec![
+        CertificateOption::X509(base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cert1[8..760]).unwrap()),
+        CertificateOption::X509(base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cert1[766..]).unwrap())]));
+    assert! ( unwrapped_block.get_optional_block_by_id(&OptionalKeyBlockId::KP_KEY_CHECK_VALUE).unwrap() == "012331550BC9");
+    assert! ( unwrapped_block.get_key_check_value().unwrap() == KeyCheckValue::CmacKCV(hex!("2331550BC9").to_vec()));
+    //assert! ( unwrapped_block.get_optional_block_by_id(&OptionalKeyBlockId::TS_TIME_STAMP).unwrap() == "20200818004100Z");
+    assert! ( unwrapped_block.get_time_stamp().unwrap() == chrono::NaiveDateTime::parse_from_str("20200818004100Z", "%Y%m%d%H%M%SZ").unwrap().and_utc())
 
 }
 
@@ -92,7 +101,7 @@ fn test_x9_143_2021_ecc_keyblock_8_6 () {
 fn test_x9_143_2021_rsa_keyblock_8_5 ()  
 {
     // Example for RSA
-    //let mut key_block_factory =  KeyBlockFactory::<aes::Aes128,  flavours::KeyBlockFlavor2<aes::Aes128>>::new(&hex!("FA36E44278DB3AB5 F298F9F7DA8F1F88").into());
+    //let mut key_block_factory =  KeyBloc kFactory::<aes::Aes128,  flavours::KeyBlockFlavor2<aes::Aes128>>::new(&hex!("FA36E44278DB3AB5 F298F9F7DA8F1F88").into());
     let mut key_block_factory =  KeyBlockDAes128::new(&hex!("FA36E44278DB3AB5 F298F9F7DA8F1F88").into());
     
     key_block_factory.set_rng ( |buf: &mut[u8]|->i32 { buf.copy_from_slice(&hex!("414243444546")); return 1;});
@@ -217,9 +226,20 @@ fn test_x9_143_2021_rsa_keyblock_8_5 ()
     assert_eq! ( recovered_block.get_usage(), key_block.get_usage());
     assert_eq! ( recovered_block.get_mode(), key_block.get_mode());
     assert_eq! ( recovered_block.get_exportability(), key_block.get_exportability());
-    assert_eq! ( recovered_block.get_optional_block(0).unwrap(), key_block.get_optional_block(0).unwrap());
-    assert_eq! ( recovered_block.get_optional_block(1).unwrap(), key_block.get_optional_block(1).unwrap());
-    assert_eq! ( recovered_block.get_optional_block(2).unwrap(), key_block.get_optional_block(2).unwrap());
+    assert_eq! ( recovered_block.get_optional_block_by_index(0).unwrap(), key_block.get_optional_block_by_index(0).unwrap());
+    assert_eq! ( recovered_block.get_optional_block_by_index(1).unwrap(), key_block.get_optional_block_by_index(1).unwrap());
+    assert_eq! ( recovered_block.get_optional_block_by_index(2).unwrap(), key_block.get_optional_block_by_index(2).unwrap());
+
+    //assert_eq! ( recovered_block.get_optional_block_by_id(&OptionalKeyBlockId::KP_KEY_CHECK_VALUE).unwrap(), "01D77F007724");
+    assert_eq! ( recovered_block.get_key_check_value().unwrap(), KeyCheckValue::CmacKCV(hex!("D77F007724").to_vec()));
+    //assert_eq! ( recovered_block.get_optional_block_by_id(&OptionalKeyBlockId::TS_TIME_STAMP).unwrap(), "20200818221218Z");
+    assert! ( recovered_block.get_time_stamp().unwrap() == chrono::NaiveDateTime::parse_from_str("20200818221218Z", "%Y%m%d%H%M%SZ").unwrap().and_utc());
+    //assert_eq! ( recovered_block.get_optional_block_by_id(&OptionalKeyBlockId::CT_PUBLIC_KEY_CERTIFICATE).unwrap(), cert);
+    assert_eq! ( recovered_block.get_certificate().unwrap(), CertificateOption::X509(base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cert[2..]).unwrap()));
+        //cert[2..].as_bytes().to_vec()));
+
+    //.add_optional_block("CT", cert)
+    
 }
 
 ///
@@ -288,9 +308,12 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
     assert_eq! ( recovered_block.get_usage(), key_block.get_usage());
     assert_eq! ( recovered_block.get_mode(), key_block.get_mode());
     assert_eq! ( recovered_block.get_exportability(), key_block.get_exportability());
-    assert_eq! ( recovered_block.get_optional_block(0).unwrap(), key_block.get_optional_block(0).unwrap());
-    assert_eq! ( recovered_block.get_optional_block(1).unwrap(), key_block.get_optional_block(1).unwrap());
-    assert_eq! ( recovered_block.get_optional_block(0).unwrap(), ("KS", "VM9A"));
+    assert_eq! ( recovered_block.get_optional_block_by_index(0).unwrap(), key_block.get_optional_block_by_index(0).unwrap());
+    assert_eq! ( recovered_block.get_optional_block_by_index(1).unwrap(), key_block.get_optional_block_by_index(1).unwrap());
+    
+    assert! ( recovered_block.get_time_stamp().unwrap() == chrono::NaiveDateTime::parse_from_str("2018-06-18T20:42:39.22", "%Y-%m-%dT%H:%M:%S%.f").unwrap().and_utc());
+    
+    assert_eq! ( recovered_block.get_optional_block_by_index(0).unwrap(), ("KS", "VM9A"));
 }
 
 
@@ -411,7 +434,7 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
         assert_eq! ( recovered_block.get_usage(), key_block.get_usage());
         assert_eq! ( recovered_block.get_mode(), key_block.get_mode());
         assert_eq! ( recovered_block.get_exportability(), key_block.get_exportability());
-        assert_eq! ( recovered_block.get_optional_block(0).unwrap(), key_block.get_optional_block(0).unwrap());
+        assert_eq! ( recovered_block.get_optional_block_by_index(0).unwrap(), key_block.get_optional_block_by_index(0).unwrap());
     }
 
 
@@ -447,7 +470,7 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
         assert_eq! ( recovered_block.get_usage(), key_block.get_usage());
         assert_eq! ( recovered_block.get_mode(), key_block.get_mode());
         assert_eq! ( recovered_block.get_exportability(), key_block.get_exportability());
-        assert_eq! ( recovered_block.get_optional_block(0).unwrap(), key_block.get_optional_block(0).unwrap());
+        assert_eq! ( recovered_block.get_optional_block_by_index(0).unwrap(), key_block.get_optional_block_by_index(0).unwrap());
 
     }
 
@@ -560,7 +583,7 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
         assert_eq! ( recovered_block.get_usage(), key_block.get_usage());
         assert_eq! ( recovered_block.get_mode(), key_block.get_mode());
         assert_eq! ( recovered_block.get_exportability(), key_block.get_exportability());
-        assert_eq! ( recovered_block.get_optional_block(0).unwrap(), key_block.get_optional_block(0).unwrap());
+        assert_eq! ( recovered_block.get_optional_block_by_index(0).unwrap(), key_block.get_optional_block_by_index(0).unwrap());
 
     }
 
@@ -597,7 +620,7 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
         assert_eq! ( recovered_block.get_usage(), key_block.get_usage());
         assert_eq! ( recovered_block.get_mode(), key_block.get_mode());
         assert_eq! ( recovered_block.get_exportability(), key_block.get_exportability());
-        assert_eq! ( recovered_block.get_optional_block(0).unwrap(), ("KS", "00604B120F9292800000"));
+        assert_eq! ( recovered_block.get_optional_block_by_index(0).unwrap(), ("KS", "00604B120F9292800000"));
 
     }
 
@@ -637,6 +660,54 @@ fn test_x9_143_2021_aes_keyblock_8_2 ()
 
     }
     
+
+/// ASC TR-31:2018 Example 3: AES Key Block without Optional Blocks
+#[test]
+fn test_x9_143_2021_examples_from_options () 
+{
+    // Example from X9.143:2021, 6.3....
+    let mut key_block_factory =  KeyBlockDAes256::new ( &hex!("88E1AB2A2E3DD38C 1FA039A536500CC8 A87AB9D62DC92C01 058FA79F44657DE6" ).into());
+  
+    key_block_factory.set_rng (| buf: &mut [u8]| -> i32 { buf.copy_from_slice( &hex!("1c2965473CE206bb855b01533782")); return 1; } );
+    key_block_factory.set_key_length_obfuscation(false);
+    
+    let mut key_block =  KeyBlockFields::new();
+    key_block
+        //.set_version( KeyBlockVersion::D_AES_CBC)
+        .set_usage( KeyUsage::P0_PIN_ENCRYPTION_KEY)
+        .set_algorithm (  KeyAlgorithm::AES)
+        .set_mode(  KeyMode::E_ENCRYPT_WRAP_ONLY)
+        .set_exportability (  KeyExportability::E_EXPORTABLE)
+        .set_context (  KeyContext::STORAGE_OR_EXCHANGE_0)
+        .set_secret ( &hex!("3F419E1CB7079442 AA37474C2EFBF8B8"))
+        .add_optional_block("DA", "01P0TENM0TGN")
+        .add_optional_block("HM", "21")
+        .add_optional_block("KS", "12345678901234600000")
+        .add_optional_block("IK", "1234567812345678")
+        //.add_optional_block("KS", "0112345678")
+        .add_optional_block("WP", "001")
+        .add_optional_block("BI", "001234567812");
+
+            
+    let wrapped_key = key_block_factory.wrap ( &mut key_block ).unwrap();
+    
+    let mut recovered_block = key_block_factory.unwrap(&wrapped_key).unwrap();
+    assert_eq! ( recovered_block.get_secret(), key_block.get_secret());
+    assert_eq! ( recovered_block.get_version(), key_block.get_version());
+    assert_eq! ( recovered_block.get_usage(), key_block.get_usage());
+    assert_eq! ( recovered_block.get_mode(), key_block.get_mode());
+    assert_eq! ( recovered_block.get_exportability(), key_block.get_exportability());
+    assert! ( recovered_block.get_derivation_allowed().unwrap() == vec![
+        DerivationAllowed::new ( KeyUsage::P0_PIN_ENCRYPTION_KEY, KeyAlgorithm::TDES, KeyMode::E_ENCRYPT_WRAP_ONLY, KeyExportability::N_NON_EXPORTABLE ),
+        DerivationAllowed::new ( KeyUsage::M0_MAC_KEY_ISO_16609_MAC_ALG_1, KeyAlgorithm::TDES, KeyMode::G_GENERATE_ONLY, KeyExportability::N_NON_EXPORTABLE )]);
+    assert! ( recovered_block.get_hmac_hash().unwrap() == HmacHashType::SHA_256);
+    assert! ( recovered_block.get_tdes_dukpt_ksn().unwrap() == TdesKeySerialNumber { bdk_or_ks_id: hex!("1234567890"), device_id: hex!("1234600000") });
+    assert! ( recovered_block.get_aes_dukpt_ksn().unwrap() == AesKeySerialNumber { bdk_or_ks_id: hex!("12345678"), device_id: hex!("12345678") });
+    assert! ( recovered_block.get_base_derivation_key_id().unwrap() == BaseDerivationKeyId::TdesKsi(hex!("1234567812")));
+    assert! ( recovered_block.get_wrapping_pedigree().unwrap() == WrappingPedigree::WP_1_LESSER);
+
+}
+
 
     
     /////////////////////////////////////////////////////////

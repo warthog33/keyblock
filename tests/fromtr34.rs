@@ -704,6 +704,7 @@ pub const B_8_KTKDH_1_PASS_BROKEN: &str = "-----BEGIN KTKDH_1Pass PEM File-----\
         lM0lIQ+khVtc2Ghijha8DJZTX10XzV3yFg==\
         -----END KTKDH_1Pass PEM File-----";
         
+/* From Errata */
 pub const B_9_TWO_PASS_TOKEN :&str = "-----BEGIN CMS-----\
         MIIGeAYJKoZIhvcNAQcCoIIGaTCCBmUCAQExDTALBglghkgBZQMEAgEwggJrBgkq\
         hkiG9w0BBwOgggJcBIICWDCCAlQCAQAxggGeMIIBmgIBADBKMEExCzAJBgNVBAYT\
@@ -1589,6 +1590,7 @@ fn decode_b_8_ktkdh_1_pass() {
         | id| {
         assert! ( id == &cms::cert::IssuerAndSerialNumber::from_der(pem::parse(B_2_2_1_6_KRD_1_ISSUER_AND_SERIAL_NUMBER).unwrap().contents()).unwrap());
         return get_priv_key_openssl(B_2_1_7_TR34_SAMPLE_KRD_1_KEY_P12);
+        //return get_priv_key_openssl(B_2_1_4_TR34_SAMPLE_CA_KRD_KEY_P12);
     });
 
     let decryped_payload: Result<Vec<u8>, tr34::Error> = key_token.decrypt(decrypt_using_krd_openssl);

@@ -336,10 +336,82 @@ impl TR34Signed for TR34KeyToken  {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, der::Sequence)]
+pub struct AlgorithmIdentifierDave {
+    /// Algorithm OID, i.e. the `algorithm` field in the `AlgorithmIdentifier`
+    /// ASN.1 schema.
+    pub oid: der::oid::ObjectIdentifier,
+
+    /// Algorithm `parameters`.
+    pub parameters: Option<der::Any>,
+    // Moved the following encrypted_content field from EncryptedContentInfoDave to cope with malformed cms messages
+    #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
+    pub encrypted_content: Option<der::asn1::OctetString>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, der::Sequence)]
+#[allow(missing_docs)]
+pub struct EncryptedContentInfoDave {
+    pub content_type: der::oid::ObjectIdentifier,
+    //pub content_enc_alg: rsa::pkcs8::spki::AlgorithmIdentifierOwned,
+    pub content_enc_alg: AlgorithmIdentifierDave,
+    // #[asn1(context_specific = "0", tag_mode = "IMPLICIT", optional = "true")]
+    // pub encrypted_content: Option<der::asn1::OctetString>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, der::Sequence)]
+#[allow(missing_docs)]
+pub struct EnvelopedDataDave {
+    pub version: cms::content_info::CmsVersion,
+    #[asn1(
+        context_specific = "0",
+        tag_mode = "IMPLICIT",
+        constructed = "true",
+        optional = "true"
+    )]
+    pub originator_info: Option<cms::enveloped_data::OriginatorInfo>,
+    pub recip_infos: cms::enveloped_data::RecipientInfos,
+    pub encrypted_content: EncryptedContentInfoDave,
+    #[asn1(
+        context_specific = "1",
+        tag_mode = "IMPLICIT",
+        constructed = "true",
+        optional = "true"
+    )]
+    pub unprotected_attrs: Option<cms::cert::x509::attr::Attributes>,
+}
+
+// THe example in TR-34 has an error where the encrypted payload is put into the wrong sequence
+// This function attempts to correct this error and return a valid EnvelopedData structure
+fn parse_malformed_enveloped_data ( message: &der::Any ) -> Result<cms::enveloped_data::EnvelopedData, Error> {
+    // missing sequence, re-add
+    let env_mal_any = der::Any::new ( der::Tag::Sequence, message.value())?;
+    let env_mal = env_mal_any.decode_as::<EnvelopedDataDave>()?;
+
+    let ecr_con_info = cms::enveloped_data::EncryptedContentInfo {
+        content_type: env_mal.encrypted_content.content_type,
+        content_enc_alg: rsa::pkcs8::spki::AlgorithmIdentifierOwned {
+            oid: env_mal.encrypted_content.content_enc_alg.oid,
+            parameters: env_mal.encrypted_content.content_enc_alg.parameters,
+        },
+        encrypted_content: env_mal.encrypted_content.content_enc_alg.encrypted_content,
+    };
+    return Ok ( cms::enveloped_data::EnvelopedData {
+        version: env_mal.version,
+        originator_info: env_mal.originator_info,
+        recip_infos: env_mal.recip_infos,
+        encrypted_content: ecr_con_info,
+        unprotected_attrs: env_mal.unprotected_attrs,
+    })
+
+}
+
+
 impl TR34Enveloped for TR34KeyToken {
     fn get_enveloped_data(&self) -> Result<cms::enveloped_data::EnvelopedData, Error> {
         let outer_signed_data: cms::signed_data::SignedData = self.cms.content.decode_as().unwrap();
-        let x =  outer_signed_data.encap_content_info.econtent.as_ref().unwrap().decode_as::<der::asn1::OctetString>().unwrap();// cms::enveloped_data::EnvelopedData::
+        let econtent = outer_signed_data.encap_content_info.econtent.unwrap();
+        let x =  econtent.decode_as::<der::asn1::OctetString>().unwrap();// cms::enveloped_data::EnvelopedData::
 
         if let Ok(env) = cms::enveloped_data::EnvelopedData::from_der(x.as_bytes()) {
             return Ok(env);
@@ -350,15 +422,30 @@ impl TR34Enveloped for TR34KeyToken {
             }
             return Err(Error::InvalidType);
         }
-        else if let Ok(env) = outer_signed_data.encap_content_info.econtent.unwrap().decode_as::<cms::enveloped_data::EnvelopedData>() {
+        else if let Ok(env) = parse_malformed_enveloped_data(&econtent) {
+            return Ok(env)
+        }
+        else if let Ok(env) = econtent.decode_as::<cms::enveloped_data::EnvelopedData>() {
             return Ok( env);
         }
+        
         else {
             return Err(Error::DecryptionError);
         }
     }
 }
 
+impl std::fmt::Display for TR34KeyToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TR34KeyBlock....")
+        //.field("cms", &self.cms)
+        .field("random_number", &hex::encode(&get_random_number_from_cms(&self.cms).unwrap()))
+        //.field("signed_data", &get_signed_data_from_cms(&self.cms))
+        .field("key_block_header", &std::str::from_utf8(&self.get_key_block_header().unwrap()))
+        .field("signer_serial_number", &self.get_signer_id().unwrap().serial_number)
+        .finish()
+    }
+}
 
 impl TR34RandomNumberToken {
     pub fn from_der ( input: &[u8]) -> Result<TR34RandomNumberToken, der::Error> {

@@ -27,6 +27,9 @@ sha2 = "0.10.7"
 pem = "2"
 ecdh = "0.0.12"
 hex-literal = "0.3"
+json = "0.12.4"
+base64 = "0.21.3"
+chrono = "0.4.30"
 
 [dev-dependencies]
 
